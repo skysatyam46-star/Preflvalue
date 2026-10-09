@@ -116,12 +116,24 @@ export function validateAndCleanEvidence(
   cleaned.first_seconds.why_should_i_care.evidence_refs = cleanRefs(cleaned.first_seconds.why_should_i_care.evidence_refs);
   cleaned.first_seconds.what_should_i_do_next.evidence_refs = cleanRefs(cleaned.first_seconds.what_should_i_do_next.evidence_refs);
 
+  // Website message
+  if (cleaned.website_message) {
+    cleaned.website_message.evidence_refs = cleanRefs(cleaned.website_message.evidence_refs);
+  }
+
   // Signals
   cleaned.signals.first_impression.evidence_refs = cleanRefs(cleaned.signals.first_impression.evidence_refs);
   cleaned.signals.audience.evidence_refs = cleanRefs(cleaned.signals.audience.evidence_refs);
   cleaned.signals.value.evidence_refs = cleanRefs(cleaned.signals.value.evidence_refs);
   cleaned.signals.trust.evidence_refs = cleanRefs(cleaned.signals.trust.evidence_refs);
   cleaned.signals.action.evidence_refs = cleanRefs(cleaned.signals.action.evidence_refs);
+
+  // Risks
+  if (Array.isArray(cleaned.risks)) {
+    cleaned.risks.forEach((risk) => {
+      risk.evidence_refs = cleanRefs(risk.evidence_refs);
+    });
+  }
 
   // Priority fix
   cleaned.priority_fix.evidence_refs = cleanRefs(cleaned.priority_fix.evidence_refs);

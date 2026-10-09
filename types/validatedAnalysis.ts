@@ -61,6 +61,13 @@ export interface FinalValidatedAnalysis {
     confidence: ConfidenceLevel;
   };
 
+  website_message: {
+    summary: string;
+    confidence: ConfidenceLevel;
+    evidence_available: boolean;
+    evidence: ValidatedEvidenceRef[];
+  };
+
   signals: {
     first_impression: {
       score: number; // 0..100
@@ -104,11 +111,24 @@ export interface FinalValidatedAnalysis {
     };
   };
 
+  risks: Array<{
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    why_it_matters: string;
+    evidence_available: boolean;
+    evidence: ValidatedEvidenceRef[];
+  }>;
+
   priority_fix: {
     title: string;
     reason: string;
-    current_direction: string;
-    suggested_direction: string;
+    impact: "high" | "medium";
+    what_you_say_now: string;
+    clearer_direction: string;
+    current_direction?: string;
+    suggested_direction?: string;
     evidence_available: boolean;
     evidence: ValidatedEvidenceRef[];
   };

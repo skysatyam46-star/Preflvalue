@@ -56,10 +56,22 @@ export interface AnalysisData {
     description: string;
     icon: string;
   }>;
+  websiteMessage?: {
+    summary: string;
+    confidence: "high" | "medium" | "low";
+  };
+  risks?: Array<{
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    why_it_matters: string;
+  }>;
   recommendation: {
     title: string;
     subhead: string;
     explanation: string;
+    impact?: "high" | "medium";
     currentDirection: string;
     strongerDirection: string;
   };
@@ -720,6 +732,32 @@ export default function ResultsScreen({
           </div>
         </motion.section>
 
+        {/* WHAT YOUR WEBSITE IS ACTUALLY SAYING (Feature 1) */}
+        {data.websiteMessage && (
+          <motion.section
+            initial={prefersReducedMotion ? {} : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.1, ease: "easeOut" }}
+            className="bg-white border border-[#e7e9ee] rounded-2xl sm:rounded-3xl p-5 sm:p-6 md:p-7 shadow-xs relative overflow-hidden scroll-mt-24"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] font-extrabold tracking-wider text-blue-800 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1.5 uppercase">
+                <Sparkles className="w-3 h-3 text-blue-600" />
+                WHAT YOUR WEBSITE IS ACTUALLY SAYING
+              </span>
+              <span className="text-[11px] text-slate-400 font-medium">
+                · Based on homepage above the fold
+              </span>
+            </div>
+            <p className="text-sm sm:text-base font-medium text-slate-900 leading-relaxed mb-2">
+              {data.websiteMessage.summary}
+            </p>
+            <p className="text-xs text-slate-500 font-normal">
+              If an unbiased first-time visitor landed on {data.domain} without context, this is what the homepage communicates.
+            </p>
+          </motion.section>
+        )}
+
         {/* 4. SECONDARY GRID (2 Columns on Desktop) */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 scroll-mt-24">
           {/* Left Box: What a visitor understands in seconds */}
@@ -921,16 +959,86 @@ export default function ResultsScreen({
           </div>
         </section>
 
-        {/* 6. BOTTOM GRID (START HERE + INLINE EXPANDABLE OTHER IMPROVEMENTS) */}
+        {/* RISKS PERCEPT FOUND (Feature 2) */}
+        <section className="bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-7 shadow-xs scroll-mt-24">
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div>
+              <h2 className="text-base sm:text-lg font-bold text-slate-950 tracking-tight">
+                Risks Percept found
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Communication and conversion risks that could prevent visitors from understanding, trusting, or acting.
+              </p>
+            </div>
+          </div>
+
+          {data.risks && data.risks.length > 0 ? (
+            <div className="space-y-3">
+              {data.risks.map((risk, idx) => {
+                const severityBg =
+                  risk.severity === "high"
+                    ? "bg-rose-50 border-rose-200 text-rose-900"
+                    : risk.severity === "medium"
+                    ? "bg-amber-50 border-amber-200 text-amber-900"
+                    : "bg-slate-50 border-slate-200 text-slate-800";
+
+                const badgeBg =
+                  risk.severity === "high"
+                    ? "bg-rose-600 text-white"
+                    : risk.severity === "medium"
+                    ? "bg-amber-500 text-white"
+                    : "bg-slate-400 text-white";
+
+                return (
+                  <div
+                    key={idx}
+                    className={`border rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${severityBg}`}
+                  >
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${badgeBg}`}>
+                          {risk.severity} risk
+                        </span>
+                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider bg-white/80 px-2 py-0.5 rounded border border-slate-200/60">
+                          {risk.category}
+                        </span>
+                      </div>
+                      <h3 className="text-sm sm:text-base font-bold text-slate-950">
+                        {risk.title}
+                      </h3>
+                      <p className="text-xs sm:text-sm text-slate-700 leading-relaxed font-normal">
+                        {risk.description}
+                      </p>
+                      <p className="text-[11px] text-slate-500 font-medium pt-1">
+                        <strong className="text-slate-700 font-semibold">Why it matters:</strong> {risk.why_it_matters}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 text-center text-xs text-slate-600">
+              No significant communication risk identified from the available homepage evidence.
+            </div>
+          )}
+        </section>
+
+        {/* 6. BOTTOM GRID (IF YOU CHANGE ONLY ONE THING + INLINE EXPANDABLE OTHER IMPROVEMENTS) */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 scroll-mt-24">
-          {/* Left Card: Start Here Priority Recommendation */}
+          {/* Left Card: If You Change Only One Thing Priority Recommendation */}
           <div className="lg:col-span-7 bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-7 shadow-xs flex flex-col justify-between">
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-extrabold tracking-wider text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1">
+                <span className="text-[10px] font-extrabold tracking-wider text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1.5 uppercase">
                   <Zap className="w-3 h-3 fill-amber-700 stroke-amber-700" />
-                  START HERE
+                  IF YOU CHANGE ONLY ONE THING
                 </span>
+                {data.recommendation.impact && (
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-900 text-white">
+                    {data.recommendation.impact} impact
+                  </span>
+                )}
               </div>
 
               <h2 className="text-base sm:text-lg font-bold text-slate-950 mb-1">

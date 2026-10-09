@@ -2,17 +2,17 @@ import type {Metadata} from 'next';
 import './globals.css'; // Global styles
 
 export const metadata: Metadata = {
-  title: 'ValueCheck — What does your website say to a stranger?',
-  description: 'First-impression website check. See what a new visitor understands, what’s unclear, and what to fix first.',
+  title: 'Percept — Website intelligence for builders',
+  description: 'Understand what your website communicates, where visitors may lose trust, and what you should improve first.',
   openGraph: {
-    title: 'ValueCheck — What does your website say to a stranger?',
-    description: 'First-impression website check. See what a new visitor understands, what’s unclear, and what to fix first.',
+    title: 'Percept — Website intelligence for builders',
+    description: 'Understand what your website communicates, where visitors may lose trust, and what you should improve first.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ValueCheck — What does your website say to a stranger?',
-    description: 'First-impression website check. See what a new visitor understands, what’s unclear, and what to fix first.',
+    title: 'Percept — Website intelligence for builders',
+    description: 'Understand what your website communicates, where visitors may lose trust, and what you should improve first.',
   },
 };
 

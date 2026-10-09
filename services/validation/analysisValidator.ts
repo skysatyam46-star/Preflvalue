@@ -1,6 +1,6 @@
 import { WebsiteSnapshot } from "@/lib/content-extractor";
 import { WebsiteAnalysis } from "@/services/ai/analysisSchema";
-import { FinalValidatedAnalysis, ValidatedDecisionStatus } from "@/types/validatedAnalysis";
+import { FinalValidatedAnalysis, ValidatedDecisionStatus, ValidatedEvidenceRef } from "@/types/validatedAnalysis";
 import { SCORING_VERSION } from "@/services/scoring/scoringConfig";
 import { normalizeSignalScore } from "@/services/scoring/normalizeSignalScore";
 import { calculateOverallScore } from "@/services/scoring/calculateOverallScore";
@@ -97,9 +97,47 @@ export function validateAndScoreAnalysis(
     action: processedSignals.action.score,
   });
 
-  // 4. Validate Priority Fix & Other Improvements
+  // 4. Validate Priority Fix, Risks & Other Improvements
   const priorityFix = validatePriorityFix(aiAnalysis?.priority_fix, snapshot);
   const otherImprovements = validateOtherImprovements(aiAnalysis?.other_improvements, snapshot);
+
+  const rawWm: any = aiAnalysis?.website_message || {};
+  const wmEv = validateEvidenceList(rawWm.evidence_refs, snapshot, true);
+  const wmSummary = rawWm.summary || `This website communicates its core product offering for ${brandName}.`;
+  const wmConfidence = ["high", "medium", "low"].includes(rawWm.confidence) ? rawWm.confidence : "medium";
+  const websiteMessage = {
+    summary: wmSummary,
+    confidence: wmConfidence,
+    evidence_available: wmEv.length > 0,
+    evidence: wmEv,
+  };
+
+  const rawRisks = aiAnalysis?.risks;
+  let risks: Array<{
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    why_it_matters: string;
+    evidence_available: boolean;
+    evidence: ValidatedEvidenceRef[];
+  }> = [];
+
+  if (Array.isArray(rawRisks) && rawRisks.length > 0) {
+    risks = rawRisks.slice(0, 3).map((r) => {
+      const verifiedEv = validateEvidenceList(r.evidence_refs, snapshot, true);
+      const severity = ["high", "medium", "low"].includes(r.severity) ? r.severity : "medium";
+      return {
+        category: r.category || "clarity",
+        severity,
+        title: r.title || "Communication risk identified",
+        description: r.description || "First-time visitors may experience friction understanding this element.",
+        why_it_matters: r.why_it_matters || "Clear communication reduces visitor bounce rate and increases conversion confidence.",
+        evidence_available: verifiedEv.length > 0,
+        evidence: verifiedEv,
+      };
+    });
+  }
 
   // 5. Sanitize Verdict & Visitor Thought
   const verdictText =
@@ -130,7 +168,11 @@ export function validateAndScoreAnalysis(
       confidence: visitorThoughtConfidence,
     },
 
+    website_message: websiteMessage,
+
     signals: processedSignals,
+
+    risks,
 
     priority_fix: priorityFix,
 

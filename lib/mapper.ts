@@ -213,12 +213,30 @@ export function mapBackendToFrontend(
 
   // Build recommendation
   const recommendation = {
-    title: "Start here",
+    title: "If you change only one thing",
     subhead: backendAnalysis.priority_fix.title,
     explanation: backendAnalysis.priority_fix.reason,
-    currentDirection: `“ ${backendAnalysis.priority_fix.current_direction} ”`,
-    strongerDirection: `“ ${backendAnalysis.priority_fix.suggested_direction} ”`,
+    impact: backendAnalysis.priority_fix.impact || "high",
+    currentDirection: `“ ${backendAnalysis.priority_fix.what_you_say_now || backendAnalysis.priority_fix.current_direction} ”`,
+    strongerDirection: `“ ${backendAnalysis.priority_fix.clearer_direction || backendAnalysis.priority_fix.suggested_direction} ”`,
   };
+
+  const websiteMessage = backendAnalysis.website_message
+    ? {
+        summary: backendAnalysis.website_message.summary,
+        confidence: backendAnalysis.website_message.confidence,
+      }
+    : undefined;
+
+  const risks = Array.isArray(backendAnalysis.risks)
+    ? backendAnalysis.risks.map((r) => ({
+        category: r.category,
+        severity: r.severity,
+        title: r.title,
+        description: r.description,
+        why_it_matters: r.why_it_matters,
+      }))
+    : [];
 
   // Build otherImprovements
   const otherImprovements = backendAnalysis.other_improvements.map((imp, idx) => {
@@ -249,6 +267,8 @@ export function mapBackendToFrontend(
     visitorThought: backendAnalysis.visitor_thought.text,
     evidence,
     signals,
+    websiteMessage,
+    risks,
     recommendation,
     otherImprovements,
     isPartialAccess: snapshot?.stats ? snapshot.stats.cleanedTextLength < 200 : false,

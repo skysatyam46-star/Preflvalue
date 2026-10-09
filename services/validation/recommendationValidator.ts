@@ -6,8 +6,11 @@ import { validateEvidenceList } from "./evidenceValidator";
 export interface PriorityFixInput {
   title: string;
   reason: string;
-  current_direction: string;
-  suggested_direction: string;
+  impact?: "high" | "medium";
+  what_you_say_now?: string;
+  clearer_direction?: string;
+  current_direction?: string;
+  suggested_direction?: string;
   evidence_refs?: EvidenceRef[];
 }
 
@@ -36,6 +39,9 @@ export function validatePriorityFix(
 ): {
   title: string;
   reason: string;
+  impact: "high" | "medium";
+  what_you_say_now: string;
+  clearer_direction: string;
   current_direction: string;
   suggested_direction: string;
   evidence_available: boolean;
@@ -66,6 +72,9 @@ export function validatePriorityFix(
     return {
       title: fallbackTitle,
       reason: fallbackReason,
+      impact: "high",
+      what_you_say_now: heroText,
+      clearer_direction: fallbackDirection,
       current_direction: heroText,
       suggested_direction: fallbackDirection,
       evidence_available: false,
@@ -74,12 +83,18 @@ export function validatePriorityFix(
   }
 
   const verifiedEvidence = validateEvidenceList(priorityFix.evidence_refs, snapshot, true);
+  const whatYouSayNow = priorityFix.what_you_say_now || priorityFix.current_direction || heroText;
+  const clearerDirection = priorityFix.clearer_direction || priorityFix.suggested_direction || `Clarify main benefit for ${brand}`;
+  const impact = priorityFix.impact || "high";
 
   return {
     title: priorityFix.title,
     reason: priorityFix.reason || "Helps cold visitors immediately classify the product value.",
-    current_direction: priorityFix.current_direction || heroText,
-    suggested_direction: priorityFix.suggested_direction || `Clarify main benefit for ${brand}`,
+    impact,
+    what_you_say_now: whatYouSayNow,
+    clearer_direction: clearerDirection,
+    current_direction: whatYouSayNow,
+    suggested_direction: clearerDirection,
     evidence_available: verifiedEvidence.length > 0,
     evidence: verifiedEvidence,
   };

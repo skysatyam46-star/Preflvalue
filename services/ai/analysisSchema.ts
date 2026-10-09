@@ -55,6 +55,12 @@ export interface WebsiteAnalysis {
     confidence: ConfidenceLevel;
   };
 
+  website_message?: {
+    summary: string;
+    confidence: ConfidenceLevel;
+    evidence_refs: EvidenceRef[];
+  };
+
   signals: {
     first_impression: {
       score: number; // 0..100
@@ -93,11 +99,23 @@ export interface WebsiteAnalysis {
     };
   };
 
+  risks?: Array<{
+    category: string;
+    severity: "high" | "medium" | "low";
+    title: string;
+    description: string;
+    why_it_matters: string;
+    evidence_refs: EvidenceRef[];
+  }>;
+
   priority_fix: {
     title: string;
     reason: string;
-    current_direction: string;
-    suggested_direction: string;
+    impact?: "high" | "medium";
+    what_you_say_now?: string;
+    clearer_direction?: string;
+    current_direction?: string;
+    suggested_direction?: string;
     evidence_refs: EvidenceRef[];
   };
 
@@ -190,6 +208,19 @@ export const WEBSITE_ANALYSIS_GEMINI_SCHEMA: Schema = {
       required: ["text", "confidence"],
     },
 
+    website_message: {
+      type: Type.OBJECT,
+      properties: {
+        summary: { type: Type.STRING, description: "Concise 2-3 sentence interpretation of what the website communicates to an uninitiated visitor" },
+        confidence: { type: Type.STRING, enum: ["high", "medium", "low"] },
+        evidence_refs: {
+          type: Type.ARRAY,
+          items: evidenceRefSchema,
+        },
+      },
+      required: ["summary", "confidence", "evidence_refs"],
+    },
+
     signals: {
       type: Type.OBJECT,
       properties: {
@@ -202,11 +233,33 @@ export const WEBSITE_ANALYSIS_GEMINI_SCHEMA: Schema = {
       required: ["first_impression", "audience", "value", "trust", "action"],
     },
 
+    risks: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          category: { type: Type.STRING, description: "Risk category e.g. clarity, audience, value, trust, action, credibility, positioning" },
+          severity: { type: Type.STRING, enum: ["high", "medium", "low"] },
+          title: { type: Type.STRING },
+          description: { type: Type.STRING },
+          why_it_matters: { type: Type.STRING },
+          evidence_refs: {
+            type: Type.ARRAY,
+            items: evidenceRefSchema,
+          },
+        },
+        required: ["category", "severity", "title", "description", "why_it_matters", "evidence_refs"],
+      },
+    },
+
     priority_fix: {
       type: Type.OBJECT,
       properties: {
         title: { type: Type.STRING },
         reason: { type: Type.STRING },
+        impact: { type: Type.STRING, enum: ["high", "medium"] },
+        what_you_say_now: { type: Type.STRING, description: "Actual or accurately paraphrased current website message" },
+        clearer_direction: { type: Type.STRING, description: "Actionable clearer direction based on identified problem" },
         current_direction: { type: Type.STRING },
         suggested_direction: { type: Type.STRING },
         evidence_refs: {
@@ -214,7 +267,7 @@ export const WEBSITE_ANALYSIS_GEMINI_SCHEMA: Schema = {
           items: evidenceRefSchema,
         },
       },
-      required: ["title", "reason", "current_direction", "suggested_direction", "evidence_refs"],
+      required: ["title", "reason", "impact", "what_you_say_now", "clearer_direction", "evidence_refs"],
     },
 
     other_improvements: {
@@ -238,7 +291,9 @@ export const WEBSITE_ANALYSIS_GEMINI_SCHEMA: Schema = {
     "verdict",
     "first_seconds",
     "visitor_thought",
+    "website_message",
     "signals",
+    "risks",
     "priority_fix",
     "other_improvements",
   ],
