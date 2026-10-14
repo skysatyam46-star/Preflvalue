@@ -1,63 +1,70 @@
 import { WebsiteSnapshot } from "@/lib/content-extractor";
+import { SERVER_LIMITS } from "@/server/config/limits";
 
 export const ANALYSIS_VERSION = "1.0";
 
 /**
- * Serializes WebsiteSnapshot into a clean, token-efficient JSON format for LLM context.
+ * Serializes WebsiteSnapshot into a clean, token-efficient JSON format for LLM context,
+ * bounded by SERVER_LIMITS.AI_MAX_INPUT_TOKENS (~4 chars/token).
  */
 export function formatSnapshotForAi(snapshot: WebsiteSnapshot): string {
   const compactPayload = {
     meta: {
-      title: snapshot.meta.title,
-      description: snapshot.meta.description,
+      title: snapshot.meta.title.slice(0, 300),
+      description: snapshot.meta.description.slice(0, 500),
     },
     navigation: {
-      brandName: snapshot.navigation.brandName,
-      navLinks: snapshot.navigation.primaryNavLinks.slice(0, 10).map((l) => l.text),
+      brandName: snapshot.navigation.brandName?.slice(0, 120),
+      navLinks: snapshot.navigation.primaryNavLinks.slice(0, 10).map((l) => l.text.slice(0, 80)),
     },
     hero: {
-      headline: snapshot.hero.headline,
-      subheadline: snapshot.hero.subheadline,
-      primaryCta: snapshot.hero.primaryCta ? snapshot.hero.primaryCta.text : undefined,
-      secondaryCta: snapshot.hero.secondaryCta ? snapshot.hero.secondaryCta.text : undefined,
+      headline: snapshot.hero.headline.slice(0, 400),
+      subheadline: snapshot.hero.subheadline.slice(0, 600),
+      primaryCta: snapshot.hero.primaryCta ? snapshot.hero.primaryCta.text.slice(0, 100) : undefined,
+      secondaryCta: snapshot.hero.secondaryCta ? snapshot.hero.secondaryCta.text.slice(0, 100) : undefined,
     },
     ctas: snapshot.ctas.slice(0, 15).map((c) => ({
-      text: c.text,
+      text: c.text.slice(0, 100),
       type: c.type,
       location: c.location,
     })),
     valueProps: {
-      topHeadings: snapshot.valueProps.headings.slice(0, 10).map((h) => `H${h.level}: ${h.text}`),
-      featureCards: snapshot.valueProps.featureCards.slice(0, 8),
+      topHeadings: snapshot.valueProps.headings.slice(0, 10).map((h) => `H${h.level}: ${h.text.slice(0, 200)}`),
+      featureCards: snapshot.valueProps.featureCards.slice(0, 8).map((fc) => ({
+        title: fc.title.slice(0, 150),
+        description: fc.description.slice(0, 300),
+      })),
       pricingSignals: snapshot.valueProps.pricingSignals,
     },
     trustSignals: {
-      socialProofHeadings: snapshot.trustSignals.socialProofHeadings,
-      statsAndMetrics: snapshot.trustSignals.statsAndMetrics,
-      testimonials: snapshot.trustSignals.testimonials.map((t) => ({
-        quote: t.quote,
-        author: t.author,
+      socialProofHeadings: snapshot.trustSignals.socialProofHeadings.slice(0, 8).map((s) => s.slice(0, 200)),
+      statsAndMetrics: snapshot.trustSignals.statsAndMetrics.slice(0, 8).map((s) => s.slice(0, 120)),
+      testimonials: snapshot.trustSignals.testimonials.slice(0, 5).map((t) => ({
+        quote: t.quote.slice(0, 400),
+        author: t.author?.slice(0, 100),
       })),
-      badgesAndCertifications: snapshot.trustSignals.badgesAndCertifications,
-      customerLogosAlt: snapshot.trustSignals.customerLogosAlt,
+      badgesAndCertifications: snapshot.trustSignals.badgesAndCertifications.slice(0, 10),
+      customerLogosAlt: snapshot.trustSignals.customerLogosAlt.slice(0, 15).map((c) => c.slice(0, 80)),
     },
     sections: snapshot.bodySections.slice(0, 8).map((s) => ({
       type: s.typeHint,
-      heading: s.heading,
-      textSummary: s.textSummary,
-      bullets: s.bulletPoints,
+      heading: s.heading?.slice(0, 200),
+      textSummary: s.textSummary.slice(0, 350),
+      bullets: s.bulletPoints.slice(0, 6).map((b) => b.slice(0, 150)),
     })),
-    forms: snapshot.forms.map((f) => ({
+    forms: snapshot.forms.slice(0, 5).map((f) => ({
       type: f.typeHint,
       fieldsCount: f.fields.length,
-      submitLabel: f.submitLabel,
+      submitLabel: f.submitLabel?.slice(0, 100),
     })),
   };
 
-  return JSON.stringify(compactPayload, null, 2);
+  const serialized = JSON.stringify(compactPayload, null, 2);
+  const maxChars = SERVER_LIMITS.AI_MAX_INPUT_TOKENS * 4;
+  return serialized.length > maxChars ? serialized.slice(0, maxChars) : serialized;
 }
 
-export const SYSTEM_PROMPT = `You are ValueCheck, the definitive website first-impression diagnostic engine.
+export const SYSTEM_PROMPT = `You are Percept, the definitive website first-impression diagnostic engine.
 
 Your core purpose is to evaluate a website homepage ONLY from the perspective of an unbiased first-time visitor scanning it for the first 5 seconds.
 
@@ -76,8 +83,13 @@ CRITICAL CONSTRAINTS & ACCURACY RULES:
 7. Visitor Thought: Represents a plausible, neutral first-time visitor interpretation scanning the homepage. NEVER sound like a testimonial, never claim the visitor used the product, never invent facts.
 8. Five-Second Questions: Answer all 5 questions (what_is_this, who_is_it_for, what_will_i_get, why_should_i_care, what_should_i_do_next) using ONLY first-impression content. Allowed statuses: 'clear', 'understandable', 'partly_clear', 'unclear'.
 9. Signal Independence: The 5 signal scores (First Impression, Audience, Value, Trust, Action) are strictly independent. High Value does NOT imply high Trust. Score 0-100 each.
-10. Priority Fix: Select the single highest-impact improvement considering visitor impact, weakness, and relation to value prop. Summarize current messaging in 'current_direction' and actionable improvement in 'suggested_direction' without altering the product's authentic promise.
-11. Other Improvements: Maximum 3 distinct, actionable, non-duplicative recommendations with specific evidence.
-12. Scope: The check evaluates the public homepage only ("Based on your homepage · First-time visitor perspective").
+10. Score & Risk Consistency: Scores, risks, and recommendations must tell a coherent, unified diagnostic story.
+- If ANY signal score is below 70, you MUST include a corresponding risk in 'risks' detailing why first-time visitors hesitate or experience friction.
+- Signal score < 50 MUST be flagged as 'high' severity risk (e.g. Trust < 50 => high severity trust risk; Audience < 50 => high severity audience risk).
+- Signal score 50-69 MUST be flagged as 'medium' severity risk.
+- NEVER return an empty 'risks' array if any signal score is below 70 or if the overall page needs improvement.
+11. Priority Fix: Select the single highest-impact improvement targeting the weakest signal. Cite the exact current headline/text in 'what_you_say_now' (or 'current_direction') and supply a realistic, concrete rewrite in 'clearer_direction' (or 'suggested_direction') that maintains the product's authentic promise.
+12. Other Improvements: Provide 2-3 distinct, actionable recommendations that do NOT duplicate the Priority Fix. Each must address a different aspect (e.g. trust, audience framing, CTA friction). Include title, explanation, 'why_it_matters' (visitor psychology), 'what_to_improve' (tactical advice), and 'copyable_suggestion' (a concrete, ready-to-use phrase tailored to this website).
+13. Scope: The check evaluates the public homepage only ("Based on your homepage · First-time visitor perspective").
 
 VERSION: ${ANALYSIS_VERSION}`;

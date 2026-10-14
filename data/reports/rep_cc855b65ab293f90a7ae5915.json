@@ -1,0 +1,196 @@
+{
+  "id": "rep_cc855b65ab293f90a7ae5915",
+  "accessToken": "tok_c237c8e760c44c8ac15b04e51669eea0a244b0917d55dc64",
+  "domain": "single.com",
+  "url": "https://single.com",
+  "createdAt": "2026-10-14T04:10:03.458Z",
+  "expiresAt": "2026-11-13T04:10:03.458Z",
+  "isUnlocked": true,
+  "previewData": {
+    "domain": "single.com",
+    "score": 72,
+    "scoreStatus": "Good",
+    "verdict": "A modern developer automation tool with strong clarity.",
+    "verdictSubtext": "Based on your homepage · First-time visitor perspective",
+    "quickSignals": [
+      {
+        "label": "Product category is clear",
+        "type": "clear"
+      },
+      {
+        "label": "Target audience is visible",
+        "type": "clear"
+      },
+      {
+        "label": "Value outcome is stated",
+        "type": "amber"
+      },
+      {
+        "label": "Trust signals need reinforcement",
+        "type": "amber"
+      },
+      {
+        "label": "Next step is clear",
+        "type": "clear"
+      }
+    ],
+    "evidence": {
+      "locationTag": "HERO SECTION",
+      "homepageExcerpt": "Ship code faster with automated deployments",
+      "clearFindings": [
+        "Headline clearly states automated deployments"
+      ],
+      "missingFindings": [
+        "No customer proof points in the initial fold"
+      ]
+    },
+    "recommendation": {
+      "title": "Add concrete proof below the primary CTA",
+      "subhead": "Include 2-3 customer logos or team sizes",
+      "explanation": "Reinforces trust before visitors reach the pricing section.",
+      "impact": "high",
+      "currentDirection": "Ship code faster with automated deployments",
+      "strongerDirection": "Ship code faster with automated deployments — trusted by 500+ dev teams"
+    },
+    "firstSeconds": [],
+    "visitorThought": "",
+    "signals": [],
+    "risks": [],
+    "otherImprovements": [],
+    "isPartialAccess": false,
+    "isAccessError": false,
+    "checkedAt": "Checked just now",
+    "reportId": "rep_cc855b65ab293f90a7ae5915",
+    "isUnlocked": false
+  },
+  "fullData": {
+    "domain": "single.com",
+    "score": 72,
+    "scoreStatus": "Good",
+    "verdict": "A modern developer automation tool with strong clarity.",
+    "verdictSubtext": "Based on your homepage · First-time visitor perspective",
+    "quickSignals": [
+      {
+        "label": "Product category is clear",
+        "type": "clear"
+      },
+      {
+        "label": "Target audience is visible",
+        "type": "clear"
+      },
+      {
+        "label": "Value outcome is stated",
+        "type": "amber"
+      },
+      {
+        "label": "Trust signals need reinforcement",
+        "type": "amber"
+      },
+      {
+        "label": "Next step is clear",
+        "type": "clear"
+      }
+    ],
+    "firstSeconds": [
+      {
+        "question": "What is this?",
+        "label": "Developer workflow automation",
+        "type": "clear"
+      },
+      {
+        "question": "Who is it for?",
+        "label": "Engineering teams",
+        "type": "clear"
+      },
+      {
+        "question": "Why trust it?",
+        "label": "No client logos or metrics visible",
+        "type": "partly"
+      }
+    ],
+    "visitorThought": "Looks like a deployment pipeline tool, but I want to see customer case studies.",
+    "evidence": {
+      "locationTag": "HERO SECTION",
+      "homepageExcerpt": "Ship code faster with automated deployments",
+      "clearFindings": [
+        "Headline clearly states automated deployments"
+      ],
+      "missingFindings": [
+        "No customer proof points in the initial fold"
+      ]
+    },
+    "signals": [
+      {
+        "id": "first_impression",
+        "title": "First Impression",
+        "score": 75,
+        "badgeText": "Clear",
+        "badgeType": "clear",
+        "description": "Category and offering are recognizable immediately.",
+        "icon": "eye"
+      },
+      {
+        "id": "trust",
+        "title": "Trust & Credibility",
+        "score": 55,
+        "badgeText": "Partly clear",
+        "badgeType": "amber",
+        "description": "Proof points should be elevated above the fold.",
+        "icon": "shield"
+      }
+    ],
+    "websiteMessage": {
+      "summary": "This product automates team deployments.",
+      "confidence": "high"
+    },
+    "risks": [
+      {
+        "category": "trust",
+        "severity": "medium",
+        "title": "Unsubstantiated Speed Claims",
+        "description": "The hero claims '10x faster' without citing benchmark data.",
+        "why_it_matters": "Skeptical technical buyers may discount the claim."
+      }
+    ],
+    "recommendation": {
+      "title": "Add concrete proof below the primary CTA",
+      "subhead": "Include 2-3 customer logos or team sizes",
+      "explanation": "Reinforces trust before visitors reach the pricing section.",
+      "impact": "high",
+      "currentDirection": "Ship code faster with automated deployments",
+      "strongerDirection": "Ship code faster with automated deployments — trusted by 500+ dev teams"
+    },
+    "otherImprovements": [
+      {
+        "id": "imp-1",
+        "title": "Clarify team seat pricing",
+        "description": "Specify whether free tier includes team invites.",
+        "whyItMatters": "Eliminates hesitation for team leads.",
+        "whatToImprove": "State 'Free for up to 3 engineers' under the CTA.",
+        "copyableSuggestion": "Free for up to 3 engineers →",
+        "icon": "users",
+        "color": "blue"
+      }
+    ],
+    "supportingContext": {
+      "discoveredPagesCount": 2,
+      "analyzedPagesCount": 2,
+      "synthesis": {
+        "companySummary": "An engineering productivity platform.",
+        "supportingInsights": [
+          "Documentation page confirms CLI support."
+        ]
+      }
+    },
+    "isPartialAccess": false,
+    "isAccessError": false,
+    "checkedAt": "Checked just now",
+    "reportId": "rep_cc855b65ab293f90a7ae5915",
+    "isUnlocked": true,
+    "unlockedAt": "2026-10-14T04:10:03.459Z"
+  },
+  "version": "1.0",
+  "unlockedAt": "2026-10-14T04:10:03.459Z",
+  "customerEmail": "single_buyer_1791951003458@example.com",
+  "purchaseId": "pur_test_5usd"
+}

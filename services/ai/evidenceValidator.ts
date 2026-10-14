@@ -70,21 +70,59 @@ export function extractSearchableTextsFromSnapshot(snapshot: WebsiteSnapshot): s
  * Checks if a given text fragment is grounded in any of the snapshot text fragments.
  */
 export function isEvidenceGrounded(textToVerify: string, searchableTexts: string[]): boolean {
-  if (!textToVerify || textToVerify.trim().length === 0) return false;
+  if (!textToVerify || typeof textToVerify !== "string" || textToVerify.trim().length === 0) {
+    return false;
+  }
 
-  const normalizedTarget = textToVerify.toLowerCase().replace(/\s+/g, " ").trim();
+  const rawTarget = textToVerify.trim();
+  const normalizedTarget = rawTarget.toLowerCase().replace(/\s+/g, " ").trim();
+  if (normalizedTarget.length < 2) return false;
 
-  // Check if any snapshot text includes the target or target includes snapshot text
+  // 1. Exact or normalized whitespace match inside a snapshot text
   for (const src of searchableTexts) {
+    if (!src) continue;
+    if (src.includes(rawTarget)) return true;
     const normalizedSrc = src.toLowerCase().replace(/\s+/g, " ").trim();
-    if (!normalizedSrc) continue;
+    if (normalizedSrc && normalizedSrc.includes(normalizedTarget)) {
+      return true;
+    }
+  }
 
-    if (
-      normalizedSrc.includes(normalizedTarget) ||
-      normalizedTarget.includes(normalizedSrc) ||
-      // Substring match for phrases longer than 10 chars
-      (normalizedTarget.length > 10 && normalizedSrc.indexOf(normalizedTarget.substring(0, 15)) !== -1)
-    ) {
+  // Reject AI meta-commentary paraphrases that are not direct substrings of the snapshot
+  const diagnosticParaphrasePattern =
+    /\b(your homepage|the homepage|your website|the website|claims to|fails to|does not state|does not clearly|currently lacks|visitors see|without explaining|without stating)\b/i;
+  if (diagnosticParaphrasePattern.test(rawTarget)) {
+    return false;
+  }
+
+  const stripPunct = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^\w\s]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const normTarget = stripPunct(rawTarget);
+  if (normTarget.length < 2) return false;
+
+  const targetDigits: string[] = rawTarget.match(/\d+(?:\.\d+)?/g) || [];
+
+  for (const src of searchableTexts) {
+    const normSrc = stripPunct(src);
+    if (!normSrc) continue;
+
+    const isDirectSubstring = normSrc.includes(normTarget);
+    const isSubstantialCover =
+      normSrc.length >= 25 &&
+      normTarget.includes(normSrc) &&
+      normSrc.length >= Math.ceil(normTarget.length * 0.8);
+
+    if (isDirectSubstring || isSubstantialCover) {
+      const srcDigits: string[] = src.match(/\d+(?:\.\d+)?/g) || [];
+      const hasAddedDigit = targetDigits.some((d) => !srcDigits.includes(d));
+      if (hasAddedDigit) {
+        return false;
+      }
       return true;
     }
   }

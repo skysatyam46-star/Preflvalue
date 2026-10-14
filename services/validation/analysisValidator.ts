@@ -63,17 +63,30 @@ export function validateAndScoreAnalysis(
       ? rawSig.confidence
       : "medium";
 
-    const { finalScore, finalConfidence } = normalizeSignalScore(
+    const { finalScore, finalStatus, finalConfidence } = normalizeSignalScore(
       rawSig.score,
       status,
       verifiedEv,
       initialConfidence
     );
 
+    let explanation = rawSig.explanation || "Diagnostic signal evaluation.";
+    if (sigKey === "trust" && verifiedEv.length > 0) {
+      const lowerExp = explanation.toLowerCase();
+      if (
+        lowerExp.includes("no trust") ||
+        lowerExp.includes("no proof") ||
+        lowerExp.includes("no social proof") ||
+        lowerExp.includes("not found")
+      ) {
+        explanation = `While the page mentions '${verifiedEv[0].text}', trust and proof elements could be positioned more prominently.`;
+      }
+    }
+
     return {
       score: finalScore,
-      status,
-      explanation: rawSig.explanation || "Diagnostic signal evaluation.",
+      status: finalStatus,
+      explanation,
       confidence: finalConfidence,
       evidence_available: verifiedEv.length > 0,
       evidence: verifiedEv,
@@ -87,6 +100,25 @@ export function validateAndScoreAnalysis(
     trust: processSignal("trust", "could_be_stronger"),
     action: processSignal("action", "clear"),
   };
+
+  // Align first_seconds statuses with normalized signal scores for cross-section consistency
+  const alignFSWithSignal = (
+    fsItem: ReturnType<typeof validateFSItem>,
+    signalScore: number
+  ) => {
+    let status: ValidatedDecisionStatus = fsItem.status;
+    if (signalScore <= 44) status = "unclear";
+    else if (signalScore <= 64) status = "partly_clear";
+    else if (signalScore <= 79) status = "understandable";
+    else status = "clear";
+    return { ...fsItem, status };
+  };
+
+  firstSeconds.what_is_this = alignFSWithSignal(firstSeconds.what_is_this, processedSignals.first_impression.score);
+  firstSeconds.who_is_it_for = alignFSWithSignal(firstSeconds.who_is_it_for, processedSignals.audience.score);
+  firstSeconds.what_will_i_get = alignFSWithSignal(firstSeconds.what_will_i_get, processedSignals.value.score);
+  firstSeconds.why_should_i_care = alignFSWithSignal(firstSeconds.why_should_i_care, processedSignals.trust.score);
+  firstSeconds.what_should_i_do_next = alignFSWithSignal(firstSeconds.what_should_i_do_next, processedSignals.action.score);
 
   // 3. Deterministic Overall Score Calculation
   const { overallScore, overallStatus } = calculateOverallScore({
@@ -104,13 +136,7 @@ export function validateAndScoreAnalysis(
   const rawWm: any = aiAnalysis?.website_message || {};
   const wmEv = validateEvidenceList(rawWm.evidence_refs, snapshot, true);
   const wmSummary = rawWm.summary || `This website communicates its core product offering for ${brandName}.`;
-  const wmConfidence = ["high", "medium", "low"].includes(rawWm.confidence) ? rawWm.confidence : "medium";
-  const websiteMessage = {
-    summary: wmSummary,
-    confidence: wmConfidence,
-    evidence_available: wmEv.length > 0,
-    evidence: wmEv,
-  };
+  let wmConfidence = ["high", "medium", "low"].includes(rawWm.confidence) ? rawWm.confidence : "medium";
 
   const rawRisks = aiAnalysis?.risks;
   let risks: Array<{
@@ -139,10 +165,50 @@ export function validateAndScoreAnalysis(
     });
   }
 
+  // Ensure risks are never empty if overall score needs improvement
+  if (overallStatus === "needs_improvement") {
+    priorityFix.impact = "high";
+    if (risks.length === 0) {
+      const signalEntries = Object.entries(processedSignals) as [string, { score: number }][];
+      signalEntries.sort((a, b) => a[1].score - b[1].score);
+      const lowest = signalEntries[0];
+      const lowestCategory = lowest ? lowest[0] : "clarity";
+
+      risks.push({
+        category: lowestCategory,
+        severity: "high",
+        title: `Primary ${lowestCategory.replace("_", " ")} issue identified`,
+        description: `First-time visitors experience friction understanding ${lowestCategory.replace("_", " ")} signals on the homepage.`,
+        why_it_matters: "Unclear messaging increases visitor bounce rates and reduces conversion confidence.",
+        evidence_available: false,
+        evidence: [],
+      });
+    }
+  }
+
   // 5. Sanitize Verdict & Visitor Thought
-  const verdictText =
+  let verdictText =
     aiAnalysis?.verdict?.text ||
     `Visitors grasp ${brandName}'s main topic, but the core benefit messaging can be strengthened.`;
+
+  const isIncomplete =
+    (snapshot.stats?.cleanedTextLength ?? 0) < 100 ||
+    !snapshot.hero?.headline ||
+    snapshot.hero.headline.trim().length === 0;
+
+  if (isIncomplete) {
+    wmConfidence = "low";
+    if (!verdictText.toLowerCase().includes("accessible homepage content")) {
+      verdictText = `Based on accessible homepage content: ${verdictText}`;
+    }
+  }
+
+  const websiteMessage = {
+    summary: wmSummary,
+    confidence: wmConfidence,
+    evidence_available: wmEv.length > 0,
+    evidence: wmEv,
+  };
 
   const visitorThoughtText = sanitizeVisitorThought(aiAnalysis?.visitor_thought?.text, brandName);
   const visitorThoughtConfidence = ["high", "medium", "low"].includes(aiAnalysis?.visitor_thought?.confidence)

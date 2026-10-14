@@ -1,0 +1,192 @@
+{
+  "id": "rep_a6797b5360f1c22a9b4c16e0",
+  "accessToken": "tok_550d883d45a56f0afa3fcf2d1afc4099656c8ce4f4dc17a0",
+  "domain": "example.com",
+  "url": "https://example.com",
+  "createdAt": "2026-10-11T15:23:58.373Z",
+  "expiresAt": "2026-11-10T15:23:58.373Z",
+  "isUnlocked": false,
+  "previewData": {
+    "domain": "example.com",
+    "score": 72,
+    "scoreStatus": "Good",
+    "verdict": "A modern developer automation tool with strong clarity.",
+    "verdictSubtext": "Based on your homepage · First-time visitor perspective",
+    "quickSignals": [
+      {
+        "label": "Product category is clear",
+        "type": "clear"
+      },
+      {
+        "label": "Target audience is visible",
+        "type": "clear"
+      },
+      {
+        "label": "Value outcome is stated",
+        "type": "amber"
+      },
+      {
+        "label": "Trust signals need reinforcement",
+        "type": "amber"
+      },
+      {
+        "label": "Next step is clear",
+        "type": "clear"
+      }
+    ],
+    "evidence": {
+      "locationTag": "HERO SECTION",
+      "homepageExcerpt": "Ship code faster with automated deployments",
+      "clearFindings": [
+        "Headline clearly states automated deployments"
+      ],
+      "missingFindings": [
+        "No customer proof points in the initial fold"
+      ]
+    },
+    "recommendation": {
+      "title": "Add concrete proof below the primary CTA",
+      "subhead": "Include 2-3 customer logos or team sizes",
+      "explanation": "Reinforces trust before visitors reach the pricing section.",
+      "impact": "high",
+      "currentDirection": "Ship code faster with automated deployments",
+      "strongerDirection": "Ship code faster with automated deployments — trusted by 500+ dev teams"
+    },
+    "firstSeconds": [],
+    "visitorThought": "",
+    "signals": [],
+    "risks": [],
+    "otherImprovements": [],
+    "isPartialAccess": false,
+    "isAccessError": false,
+    "checkedAt": "Checked just now",
+    "reportId": "rep_a6797b5360f1c22a9b4c16e0",
+    "isUnlocked": false
+  },
+  "fullData": {
+    "domain": "example.com",
+    "score": 72,
+    "scoreStatus": "Good",
+    "verdict": "A modern developer automation tool with strong clarity.",
+    "verdictSubtext": "Based on your homepage · First-time visitor perspective",
+    "quickSignals": [
+      {
+        "label": "Product category is clear",
+        "type": "clear"
+      },
+      {
+        "label": "Target audience is visible",
+        "type": "clear"
+      },
+      {
+        "label": "Value outcome is stated",
+        "type": "amber"
+      },
+      {
+        "label": "Trust signals need reinforcement",
+        "type": "amber"
+      },
+      {
+        "label": "Next step is clear",
+        "type": "clear"
+      }
+    ],
+    "firstSeconds": [
+      {
+        "question": "What is this?",
+        "label": "Developer workflow automation",
+        "type": "clear"
+      },
+      {
+        "question": "Who is it for?",
+        "label": "Engineering teams",
+        "type": "clear"
+      },
+      {
+        "question": "Why trust it?",
+        "label": "No client logos or metrics visible",
+        "type": "partly"
+      }
+    ],
+    "visitorThought": "Looks like a deployment pipeline tool, but I want to see customer case studies.",
+    "evidence": {
+      "locationTag": "HERO SECTION",
+      "homepageExcerpt": "Ship code faster with automated deployments",
+      "clearFindings": [
+        "Headline clearly states automated deployments"
+      ],
+      "missingFindings": [
+        "No customer proof points in the initial fold"
+      ]
+    },
+    "signals": [
+      {
+        "id": "first_impression",
+        "title": "First Impression",
+        "score": 75,
+        "badgeText": "Clear",
+        "badgeType": "clear",
+        "description": "Category and offering are recognizable immediately.",
+        "icon": "eye"
+      },
+      {
+        "id": "trust",
+        "title": "Trust & Credibility",
+        "score": 55,
+        "badgeText": "Partly clear",
+        "badgeType": "amber",
+        "description": "Proof points should be elevated above the fold.",
+        "icon": "shield"
+      }
+    ],
+    "websiteMessage": {
+      "summary": "This product automates team deployments.",
+      "confidence": "high"
+    },
+    "risks": [
+      {
+        "category": "trust",
+        "severity": "medium",
+        "title": "Unsubstantiated Speed Claims",
+        "description": "The hero claims '10x faster' without citing benchmark data.",
+        "why_it_matters": "Skeptical technical buyers may discount the claim."
+      }
+    ],
+    "recommendation": {
+      "title": "Add concrete proof below the primary CTA",
+      "subhead": "Include 2-3 customer logos or team sizes",
+      "explanation": "Reinforces trust before visitors reach the pricing section.",
+      "impact": "high",
+      "currentDirection": "Ship code faster with automated deployments",
+      "strongerDirection": "Ship code faster with automated deployments — trusted by 500+ dev teams"
+    },
+    "otherImprovements": [
+      {
+        "id": "imp-1",
+        "title": "Clarify team seat pricing",
+        "description": "Specify whether free tier includes team invites.",
+        "whyItMatters": "Eliminates hesitation for team leads.",
+        "whatToImprove": "State 'Free for up to 3 engineers' under the CTA.",
+        "copyableSuggestion": "Free for up to 3 engineers →",
+        "icon": "users",
+        "color": "blue"
+      }
+    ],
+    "supportingContext": {
+      "discoveredPagesCount": 2,
+      "analyzedPagesCount": 2,
+      "synthesis": {
+        "companySummary": "An engineering productivity platform.",
+        "supportingInsights": [
+          "Documentation page confirms CLI support."
+        ]
+      }
+    },
+    "isPartialAccess": false,
+    "isAccessError": false,
+    "checkedAt": "Checked just now",
+    "reportId": "rep_a6797b5360f1c22a9b4c16e0",
+    "isUnlocked": false
+  },
+  "version": "1.0"
+}

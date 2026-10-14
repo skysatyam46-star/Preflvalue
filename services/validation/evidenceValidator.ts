@@ -77,7 +77,13 @@ export function validateSingleEvidence(
     const normSrc = normalizeTextForMatching(src);
     if (!normSrc) continue;
 
-    if (normSrc.includes(normAiText) || normAiText.includes(normSrc)) {
+    const isExactNormMatch = normSrc.includes(normAiText);
+    const isLenientSubMatch =
+      normAiText.includes(normSrc) &&
+      normSrc.length >= Math.min(normAiText.length * 0.7, 40) &&
+      normSrc.split(/\s+/).length >= 3;
+
+    if (isExactNormMatch || isLenientSubMatch) {
       // Check numeric integrity: if AI added a digit that does not exist in source text, REJECT as semantic fabrication
       const srcDigits: string[] = src.match(/\d+(?:\.\d+)?/g) || [];
       const hasAddedDigit = aiDigits.some((d) => !srcDigits.includes(d));

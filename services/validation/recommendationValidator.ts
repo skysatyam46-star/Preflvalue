@@ -1,7 +1,7 @@
 import { WebsiteSnapshot } from "@/lib/content-extractor";
 import { EvidenceRef } from "@/services/ai/analysisSchema";
 import { ValidatedEvidenceRef } from "@/types/validatedAnalysis";
-import { validateEvidenceList } from "./evidenceValidator";
+import { validateEvidenceList, validateSingleEvidence } from "./evidenceValidator";
 
 export interface PriorityFixInput {
   title: string;
@@ -18,6 +18,25 @@ export interface OtherImprovementInput {
   title: string;
   explanation: string;
   evidence_refs?: EvidenceRef[];
+  what_to_improve?: string;
+  why_it_matters?: string;
+  copyable_suggestion?: string;
+}
+
+export function sanitizeRecommendationCopy(text: string | undefined, snapshot: WebsiteSnapshot): string {
+  if (!text) return "";
+  let result = text;
+  result = result.replace(/\b\d{1,3}(?:,\d{3})+(?:\+)?(?!\w)/g, (match) => {
+    return snapshot.trustSignals?.statsAndMetrics?.some((s) => s.includes(match)) ? match : "leading";
+  });
+  result = result.replace(/\b\d+%(?!\w)/g, (match) => {
+    return snapshot.trustSignals?.statsAndMetrics?.some((s) => s.includes(match)) ? match : "measurable";
+  });
+  result = result.replace(/\bSOC\s*2(?:\s*Certified)?(?!\w)/gi, "industry standards");
+  result = result.replace(/\b\d(?:\.\d+)?\/5(?!\w)/g, (match) => {
+    return snapshot.trustSignals?.statsAndMetrics?.some((s) => s.includes(match)) ? match : "top-rated";
+  });
+  return result.replace(/\s+/g, " ").trim();
 }
 
 const GENERIC_RECOMMENDATION_TITLES = [
@@ -83,8 +102,28 @@ export function validatePriorityFix(
   }
 
   const verifiedEvidence = validateEvidenceList(priorityFix.evidence_refs, snapshot, true);
-  const whatYouSayNow = priorityFix.what_you_say_now || priorityFix.current_direction || heroText;
-  const clearerDirection = priorityFix.clearer_direction || priorityFix.suggested_direction || `Clarify main benefit for ${brand}`;
+
+  const rawCandidate = priorityFix.what_you_say_now || priorityFix.current_direction;
+  let whatYouSayNow: string;
+  if (rawCandidate) {
+    const isGrounded = validateSingleEvidence({ source: "hero", text: rawCandidate }, snapshot).status === "verified";
+    if (isGrounded) {
+      whatYouSayNow = rawCandidate;
+    } else {
+      whatYouSayNow =
+        snapshot.hero?.headline && snapshot.hero.headline.trim().length > 0
+          ? snapshot.hero.headline.trim()
+          : "Current headline excerpt unavailable from accessible homepage content.";
+    }
+  } else {
+    whatYouSayNow =
+      snapshot.hero?.headline && snapshot.hero.headline.trim().length > 0
+        ? snapshot.hero.headline.trim()
+        : "Current headline excerpt unavailable from accessible homepage content.";
+  }
+
+  const rawClearer = priorityFix.clearer_direction || priorityFix.suggested_direction || `Clarify main benefit for ${brand}`;
+  const clearerDirection = sanitizeRecommendationCopy(rawClearer, snapshot);
   const impact = priorityFix.impact || "high";
 
   return {
@@ -112,6 +151,9 @@ export function validateOtherImprovements(
   explanation: string;
   evidence_available: boolean;
   evidence: ValidatedEvidenceRef[];
+  what_to_improve?: string;
+  why_it_matters?: string;
+  copyable_suggestion?: string;
 }> {
   if (!Array.isArray(improvements)) return [];
 
@@ -120,6 +162,9 @@ export function validateOtherImprovements(
     explanation: string;
     evidence_available: boolean;
     evidence: ValidatedEvidenceRef[];
+    what_to_improve?: string;
+    why_it_matters?: string;
+    copyable_suggestion?: string;
   }> = [];
 
   const seenTitles = new Set<string>();
@@ -153,11 +198,18 @@ export function validateOtherImprovements(
 
     const verifiedEv = validateEvidenceList(item.evidence_refs, snapshot, true);
 
+    const copyableSuggestion = item.copyable_suggestion
+      ? sanitizeRecommendationCopy(item.copyable_suggestion, snapshot)
+      : undefined;
+
     validList.push({
       title: item.title,
       explanation: item.explanation || "Improves visitor comprehension and reduces decision friction.",
       evidence_available: verifiedEv.length > 0,
       evidence: verifiedEv,
+      what_to_improve: item.what_to_improve,
+      why_it_matters: item.why_it_matters,
+      copyable_suggestion: copyableSuggestion,
     });
   }
 

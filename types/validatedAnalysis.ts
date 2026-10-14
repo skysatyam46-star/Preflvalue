@@ -138,5 +138,10 @@ export interface FinalValidatedAnalysis {
     explanation: string;
     evidence_available: boolean;
     evidence: ValidatedEvidenceRef[];
+    why_it_matters?: string;
+    what_to_improve?: string;
+    copyable_suggestion?: string;
   }>;
+
+  supportingContext?: import("./supportingContext").SupportingContext;
 }

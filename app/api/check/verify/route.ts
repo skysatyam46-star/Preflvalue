@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateUrl, checkSsrf } from "@/lib/url-validator";
 import { fetchWebsiteHomepage } from "@/lib/website-fetcher";
 import { setCachedFetch } from "@/lib/fetch-cache";
+import {
+  getClientIp,
+  checkAndAcquireRateLimit,
+  releaseConcurrencySlot,
+} from "@/server/security/rateLimiter";
+import { SERVER_LIMITS } from "@/server/config/limits";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +17,30 @@ export const dynamic = "force-dynamic";
  * Verifies that the website exists and is reachable before starting the full scan animation.
  */
 export async function POST(req: NextRequest) {
+  // 0. Rate Limiting & Concurrency Protection
+  const clientIp = getClientIp(req);
+  const limitCheck = checkAndAcquireRateLimit(clientIp, {
+    scope: "verify",
+    maxPerMinute: SERVER_LIMITS.VERIFY_RATE_LIMIT_PER_MINUTE,
+    maxConcurrent: SERVER_LIMITS.VERIFY_MAX_CONCURRENT_PER_IP,
+  });
+
+  if (!limitCheck.allowed) {
+    const headers: Record<string, string> = {};
+    if (limitCheck.retryAfterSeconds) {
+      headers["Retry-After"] = String(limitCheck.retryAfterSeconds);
+    }
+    return NextResponse.json(
+      {
+        success: false,
+        reachable: false,
+        error: limitCheck.error || "RATE_LIMITED",
+        message: limitCheck.message || "Too many verification requests. Please try again shortly.",
+      },
+      { status: 429, headers }
+    );
+  }
+
   try {
     let body: { url?: unknown };
     try {
@@ -77,7 +107,8 @@ export async function POST(req: NextRequest) {
       let httpStatus = 502;
       if (fetchResult.error === "INVALID_URL") httpStatus = 400;
       if (fetchResult.error === "SSRF_BLOCKED") httpStatus = 422;
-      if (fetchResult.error === "FETCH_TIMEOUT") httpStatus = 504;
+      if (fetchResult.error === "FETCH_TIMEOUT" || fetchResult.error === "WEBSITE_FETCH_TIMEOUT") httpStatus = 504;
+      if (fetchResult.error === "WEBSITE_RESPONSE_TOO_LARGE") httpStatus = 413;
 
       return NextResponse.json(
         {
@@ -108,18 +139,17 @@ export async function POST(req: NextRequest) {
       { status: 200 }
     );
   } catch (error: unknown) {
-    console.error("Error in /api/check/verify endpoint:", error);
+    console.error("Error in /api/check/verify endpoint:", error instanceof Error ? error.message : "Unknown error");
     return NextResponse.json(
       {
         success: false,
         reachable: false,
         error: "FETCH_FAILED",
-        message:
-          error instanceof Error
-            ? `Failed to verify website reachability: ${error.message}`
-            : "Unable to verify website reachability. Please try again.",
+        message: "Unable to verify website reachability. Please try again.",
       },
       { status: 500 }
     );
+  } finally {
+    releaseConcurrencySlot(clientIp, "verify");
   }
 }

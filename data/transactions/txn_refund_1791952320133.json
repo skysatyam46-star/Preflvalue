@@ -1,0 +1,10 @@
+{
+  "transactionId": "txn_refund_1791952320133",
+  "planId": "ONE_FULL_REPORT",
+  "amount": 5,
+  "currency": "USD",
+  "customerEmail": "refund@test.com",
+  "reportId": "rep_refund",
+  "status": "refunded",
+  "processedAt": "2026-10-14T04:32:00.134Z"
+}

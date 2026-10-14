@@ -1,0 +1,10 @@
+{
+  "transactionId": "txn_idemp_1791943848469",
+  "planId": "ONE_FULL_REPORT",
+  "amount": 5,
+  "currency": "USD",
+  "customerEmail": "idemp_1791943848469@example.com",
+  "reportId": "rep_60b3876970bfd0d18ebea4c1",
+  "status": "completed",
+  "processedAt": "2026-10-14T02:10:48.469Z"
+}

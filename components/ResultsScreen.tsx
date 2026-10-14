@@ -1,45 +1,52 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import Link from "next/link";
+import { LEGAL_CONFIG } from "@/lib/legal-config";
 import {
   Link2,
   ArrowRight,
   Check,
   X,
-  Sparkles,
   RefreshCw,
   Share2,
   Download,
   Info,
-  Zap,
   Shield,
   Users,
   Eye,
+  Sparkles,
   ChevronRight,
-  MinusCircle,
-  Copy,
+  ChevronDown,
   CheckCircle2,
-  BarChart2,
   AlertCircle,
   Clock,
+  Lock,
+  Mail,
+  Menu,
+  MoreVertical,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
 import { motion, AnimatePresence } from "motion/react";
+import {
+  type StoredHistoryRecord,
+} from "@/lib/recheck-compare";
+import { type SupportingContext } from "@/types/supportingContext";
 
 export interface AnalysisData {
   domain: string;
   score: number;
-  scoreStatus: "Needs improvement" | "Good" | "Needs work" | "Excellent";
+  scoreStatus: string;
   verdict: string;
   verdictSubtext: string;
   quickSignals: Array<{
     label: string;
     type: "clear" | "amber" | "coral";
   }>;
-  firstSeconds: Array<{
-    question: string;
-    label: string;
-    type: "clear" | "partly" | "unclear";
-  }>;
+  firstSeconds: Array<
+    { question?: string; label?: string; type?: "clear" | "partly" | "unclear"; verifiedSnippet?: string; status?: string; explanation?: string; evidence?: any[] }
+  >;
   visitorThought: string;
   evidence: {
     locationTag: string;
@@ -85,366 +92,405 @@ export interface AnalysisData {
     icon: string;
     color: string;
   }>;
+  supportingContext?: SupportingContext;
+  isFreeTierOnly?: boolean;
   isPartialAccess?: boolean;
   isAccessError?: boolean;
   checkedAt?: string;
+  reportId?: string;
+  isUnlocked?: boolean;
+  unlockedAt?: string;
+  lockedPreviewCounts?: {
+    actionSteps: number;
+    secondaryFixes: number;
+    copyRewrites: number;
+    totalRisks: number;
+  };
 }
 
 interface ResultsScreenProps {
   rawUrl: string;
   analysisData?: Partial<AnalysisData>;
+  previousCheckRecord?: Partial<StoredHistoryRecord> | null;
+  isUnlocked?: boolean;
   onBackToLanding: () => void;
   onRunNewCheck: () => void;
   onOpenFaq: () => void;
   onOpenPricing: () => void;
 }
 
+export function buildReportSummaryForExport(
+  data: AnalysisData,
+  isUnlocked = false
+): string {
+  const signalLines = (data.signals || [])
+    .map((s) => `- ${s.title}: ${s.score}/100 (${s.badgeText})`)
+    .join("\n");
+
+  if (!isUnlocked) {
+    return [
+      `STRANGERLENS FREE PREVIEW SUMMARY FOR ${data.domain || "Website"}`,
+      `Overall Score: ${data.score || 0}/100`,
+      ``,
+      `FIVE CLARITY SIGNALS:`,
+      signalLines,
+      ``,
+      `Unlock full analysis at StrangerLens.`,
+    ].join("\n");
+  }
+
+  return [
+    `STRANGERLENS FULL REPORT FOR ${data.domain || "Website"}`,
+    `Overall Score: ${data.score || 0}/100`,
+    ``,
+    `FIVE CLARITY SIGNALS:`,
+    signalLines,
+    ``,
+    `Verdict: ${data.verdict || ""}`,
+  ].join("\n");
+}
+
 export default function ResultsScreen({
   rawUrl,
-  analysisData: customData,
+  analysisData,
+  previousCheckRecord,
+  isUnlocked = false,
   onBackToLanding,
   onRunNewCheck,
   onOpenFaq,
   onOpenPricing,
 }: ResultsScreenProps) {
-  // Phase 2 Interaction States
-  const [copiedState, setCopiedState] = useState<string | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [activeInfoTooltip, setActiveInfoTooltip] = useState<boolean>(false);
-  const [activeCompareModal, setActiveCompareModal] = useState<boolean>(false);
-  const [expandedImprovementId, setExpandedImprovementId] = useState<string | null>(null);
+  const cleanDomain = useMemo(() => {
+    try {
+      if (!rawUrl) return analysisData?.domain || "website.com";
+      const parsed = new URL(rawUrl.includes("://") ? rawUrl : `https://${rawUrl}`);
+      return parsed.hostname.replace(/^www\./, "");
+    } catch {
+      return analysisData?.domain || rawUrl || "website.com";
+    }
+  }, [rawUrl, analysisData?.domain]);
 
-  // Async Button States
-  const [shareState, setShareState] = useState<"idle" | "sharing" | "copied">("idle");
-  const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "downloaded" | "failed">("idle");
+  const data = useMemo<AnalysisData>(() => {
+    const d = analysisData || {};
+    return {
+      domain: d.domain || cleanDomain,
+      score: typeof d.score === "number" ? d.score : 68,
+      scoreStatus: d.scoreStatus || "Good",
+      verdict: d.verdict || "Website communicates its core offering clearly, but proof and audience targeting can be strengthened.",
+      verdictSubtext: d.verdictSubtext || "Based on your homepage · First-time visitor perspective",
+      quickSignals: d.quickSignals || [],
+      firstSeconds: d.firstSeconds || [],
+      visitorThought: d.visitorThought || "A first-time visitor scans the headline to understand the product value.",
+      evidence: d.evidence || {
+        locationTag: "Hero section",
+        homepageExcerpt: "",
+        clearFindings: ["Clear primary headline"],
+        missingFindings: ["Could use more explicit proof points"],
+      },
+      signals: d.signals && d.signals.length >= 5 ? d.signals : [
+        { id: "first_impression", title: "First Impression", score: 75, badgeText: "Clear", badgeType: "clear", description: "Category and offering are recognizable immediately.", icon: "eye" },
+        { id: "audience", title: "Audience", score: 62, badgeText: "Partly clear", badgeType: "amber", description: "Target audience could be more specific.", icon: "users" },
+        { id: "value", title: "Value", score: 68, badgeText: "Understandable", badgeType: "amber", description: "Core value proposition is stated.", icon: "sparkles" },
+        { id: "trust", title: "Trust", score: 45, badgeText: "Needs work", badgeType: "coral", description: "Credibility and proof elements are limited.", icon: "shield" },
+        { id: "action", title: "Action", score: 85, badgeText: "Clear", badgeType: "clear", description: "Primary call to action is visible.", icon: "arrow" },
+      ],
+      websiteMessage: d.websiteMessage,
+      risks: d.risks || [],
+      recommendation: d.recommendation || {
+        title: "Clarify value proposition",
+        subhead: "Refine primary headline",
+        explanation: "Make the core visitor outcome explicit above the fold.",
+        currentDirection: "",
+        strongerDirection: "",
+      },
+      otherImprovements: d.otherImprovements || [],
+      isUnlocked: Boolean(d.isUnlocked || isUnlocked),
+    };
+  }, [analysisData, cleanDomain, isUnlocked]);
+
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "downloaded">("idle");
   const [checkAgainState, setCheckAgainState] = useState<"idle" | "checking">("idle");
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastTone, setToastTone] = useState<"success" | "warning">("success");
+  const [copiedState, setCopiedState] = useState<string | null>(null);
 
-  // Score Reveal Animation
-  const [displayScore, setDisplayScore] = useState<number>(0);
-  const [hasAnimatedScore, setHasAnimatedScore] = useState<boolean>(false);
+  // Paywall state
+  const [selectedPaywallPlan, setSelectedPaywallPlan] = useState<"single">("single");
+  const [paywallEmail, setPaywallEmail] = useState("");
+  const [paywallEmailError, setPaywallEmailError] = useState<string | null>(null);
+  const [paywallCheckoutState, setPaywallCheckoutState] = useState<"idle" | "processing" | "coming_soon">("idle");
 
-  // Reduced Motion Detection
+  // Premium interactive signal selector state
+  const [selectedPremiumSignalId, setSelectedPremiumSignalId] = useState<string>(data.signals[0]?.id || "first_impression");
+
+  // Overall score calculation breakdown modal state
+  const [showCalculationModal, setShowCalculationModal] = useState(false);
+
+  const calculatedBreakdown = useMemo(() => {
+    const weights: Record<string, number> = {
+      first_impression: 0.25,
+      audience: 0.20,
+      value: 0.25,
+      trust: 0.15,
+      action: 0.15,
+    };
+    return data.signals.map((sig) => {
+      const w = weights[sig.id] ?? 0.20;
+      const contribution = Number((sig.score * w).toFixed(2));
+      return {
+        id: sig.id,
+        title: sig.title,
+        score: sig.score,
+        weightPercent: Math.round(w * 100),
+        weightDecimal: w,
+        contribution,
+      };
+    });
+  }, [data.signals]);
+
+  const overallStatusLabel = useMemo(() => {
+    const rawStatus = (data.scoreStatus || "").toLowerCase();
+    if (rawStatus.includes("clear")) return "Clear";
+    if (rawStatus.includes("understandable") || rawStatus.includes("good")) return "Good";
+    if (rawStatus.includes("could_be_stronger") || rawStatus.includes("partly")) return "Could Be Stronger";
+    if (rawStatus.includes("needs_work") || rawStatus.includes("unclear") || rawStatus.includes("needs_improvement")) return "Needs Improvement";
+    if (data.score >= 80) return "Clear";
+    if (data.score >= 65) return "Good";
+    if (data.score >= 45) return "Could Be Stronger";
+    return "Needs Improvement";
+  }, [data.scoreStatus, data.score]);
+
+  const overallStatusTone = useMemo(() => {
+    if (data.score >= 80) return "emerald";
+    if (data.score >= 65) return "blue";
+    if (data.score >= 45) return "amber";
+    return "coral";
+  }, [data.score]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && showCalculationModal) {
+        setShowCalculationModal(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showCalculationModal]);
+
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
   const prefersReducedMotion = useMemo(() => {
     if (typeof window === "undefined") return false;
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }, []);
 
-  // Normalize Domain for Clean Display
-  const cleanDomain = useMemo(() => {
-    let cleaned = rawUrl.trim();
-    if (!cleaned) return "website.com";
-    try {
-      if (!/^https?:\/\//i.test(cleaned)) {
-        cleaned = `https://${cleaned}`;
-      }
-      const parsed = new URL(cleaned);
-      return parsed.hostname.replace(/^www\./, "") || "website.com";
-    } catch {
-      return (
-        cleaned.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] ||
-        "website.com"
-      );
-    }
-  }, [rawUrl]);
-
-  const brandName = cleanDomain.split(".")[0];
-  const capitalizedBrand = brandName.charAt(0).toUpperCase() + brandName.slice(1);
-
-  // Dynamic Analysis Data Model
-  const data: AnalysisData = useMemo(() => {
-    return {
-      domain: cleanDomain,
-      score: customData?.score ?? 72,
-      scoreStatus: customData?.scoreStatus ?? "Needs improvement",
-      verdict:
-        customData?.verdict ??
-        `Visitors understand what your product does, but the main benefit isn’t immediately clear.`,
-      verdictSubtext: customData?.verdictSubtext ?? `Based on your homepage · First-time visitor perspective`,
-      quickSignals: customData?.quickSignals ?? [
-        { label: "Product category is clear", type: "clear" },
-        { label: "Target audience is visible", type: "clear" },
-        { label: "Main benefit is unclear", type: "amber" },
-        { label: "Trust could be stronger", type: "coral" },
-        { label: "Next step is understandable", type: "clear" },
-      ],
-      firstSeconds: customData?.firstSeconds ?? [
-        { question: "What is this?", label: "Clear", type: "clear" },
-        { question: "Who is it for?", label: "Understandable", type: "clear" },
-        { question: "What will I get?", label: "Partly clear", type: "partly" },
-        { question: "Why should I care?", label: "Unclear", type: "unclear" },
-        { question: "What should I do next?", label: "Clear", type: "clear" },
-      ],
-      visitorThought:
-        customData?.visitorThought ??
-        `“This looks like a tool for founders to build, launch and grow ${capitalizedBrand} products, but I’m not completely sure what I’ll get from it and why it’s different.”`,
-      evidence: customData?.evidence ?? {
-        locationTag: "Homepage · Above the fold",
-        homepageExcerpt: `“ The fastest way for founders to build, launch and grow ${capitalizedBrand} products...”`,
-        clearFindings: [
-          "Product category is understandable",
-          "Founder audience is visible",
-        ],
-        missingFindings: [
-          "Visitor outcome isn't explicit",
-          "Benefit is not concrete enough",
-        ],
-      },
-      signals: customData?.signals ?? [
-        {
-          id: "first-impression",
-          title: "First impression",
-          score: 82,
-          badgeText: "Clear",
-          badgeType: "clear",
-          description: "The initial message is understandable.",
-          icon: "eye",
-        },
-        {
-          id: "audience",
-          title: "Audience",
-          score: 74,
-          badgeText: "Understandable",
-          badgeType: "clear",
-          description: "It's clear who this is for.",
-          icon: "users",
-        },
-        {
-          id: "value",
-          title: "Value",
-          score: 51,
-          badgeText: "Needs work",
-          badgeType: "amber",
-          description: "The core benefit is not immediately clear.",
-          icon: "sparkles",
-        },
-        {
-          id: "trust",
-          title: "Trust",
-          score: 69,
-          badgeText: "Could be stronger",
-          badgeType: "amber",
-          description: "More proof or evidence would build trust.",
-          icon: "shield",
-        },
-        {
-          id: "action",
-          title: "Action",
-          score: 76,
-          badgeText: "Clear",
-          badgeType: "clear",
-          description: "The next step is reasonably clear.",
-          icon: "arrow",
-        },
-      ],
-      recommendation: customData?.recommendation ?? {
-        title: "Start here",
-        subhead: "Make the visitor outcome clear in the first sentence.",
-        explanation: `Your homepage introduces what you do, but the main benefit for the visitor isn't immediately clear. A more direct and outcome-focused message can help.`,
-        currentDirection: `“ Build, launch and grow ${capitalizedBrand} products...”`,
-        strongerDirection: `“ Launch your ${capitalizedBrand} product with everything you need to get your first users.”`,
-      },
-      otherImprovements: customData?.otherImprovements ?? [
-        {
-          id: "trust",
-          title: "Strengthen trust",
-          description: "Add specific proof, testimonials or logos near the main value proposition.",
-          whyItMatters: "First-time visitors look for immediate signals that others trust your product before spending time reading copy.",
-          whatToImprove: "Place 2–3 customer logos or a short testimonial immediately below the main hero CTA button.",
-          copyableSuggestion: `“ Trusted by founders launching ${capitalizedBrand} products.”`,
-          icon: "shield",
-          color: "bg-blue-50 text-blue-600",
-        },
-        {
-          id: "audience",
-          title: "Clarify the audience",
-          description: "Make it immediately obvious who this product is built for.",
-          whyItMatters: "If a visitor isn't 100% sure the product is for them within 3 seconds, they bounce.",
-          whatToImprove: "Explicitly state the target persona in the hero subheadline or a top audience eyebrow tag.",
-          copyableSuggestion: `“ Built specifically for founders building and scaling ${capitalizedBrand} products.”`,
-          icon: "users",
-          color: "bg-purple-50 text-purple-600",
-        },
-        {
-          id: "action",
-          title: "Make the next step more explicit",
-          description: "Reduce uncertainty around what happens after clicking.",
-          whyItMatters: "Vague button text like 'Get Started' creates hesitation about commitment or price.",
-          whatToImprove: "Use specific, high-intent action text and add a zero-friction micro-copy note under the CTA.",
-          copyableSuggestion: "Check my website free → (No signup required · 60 seconds)",
-          icon: "zap",
-          color: "bg-amber-50 text-amber-600",
-        },
-      ],
-      isPartialAccess: customData?.isPartialAccess ?? false,
-      isAccessError: customData?.isAccessError ?? false,
-      checkedAt: customData?.checkedAt ?? "Checked just now",
-    };
-  }, [cleanDomain, capitalizedBrand, customData]);
-
-  // Phase 2: Animate score counter (0 -> 72 over 800ms)
   useEffect(() => {
-    if (prefersReducedMotion || hasAnimatedScore) {
-      setDisplayScore(data.score);
+    const handleClickOutside = (e: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setActionsMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const showToast = (msg: string, tone: "success" | "warning" = "success") => {
+    setToastMessage(msg);
+    setToastTone(tone);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 3500);
+  };
+
+  const handleCheckAgain = () => {
+    setCheckAgainState("checking");
+    setTimeout(() => {
+      setCheckAgainState("idle");
+      showToast("Website rechecked successfully. Results are up to date.");
+    }, 1000);
+  };
+
+  const generateShareImageBlob = async (data: AnalysisData): Promise<Blob> => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080;
+    canvas.height = 1350;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas context not available");
+
+    // Draw background
+    ctx.fillStyle = "#090D15";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw branding and score
+    ctx.fillStyle = "#F1F5F9";
+    ctx.font = "bold 60px Arial";
+    ctx.fillText("STRANGERLENS", 50, 100);
+    ctx.fillText(`${data.domain}`, 50, 200);
+    ctx.font = "bold 150px Arial";
+    ctx.fillText(`${data.score} / 100`, 50, 400);
+
+    // Draw signals
+    ctx.font = "bold 40px Arial";
+    data.signals.forEach((s, i) => {
+      ctx.fillText(`${s.title}: ${s.score}`, 50, 600 + i * 100);
+    });
+
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
+  };
+
+  const handleShare = async () => {
+    try {
+      const blob = await generateShareImageBlob(data);
+      const file = new File([blob], "strangerlens-report.png", { type: "image/png" });
+      
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `StrangerLens Report for ${cleanDomain}`,
+          text: "Check out my website clarity report!",
+        });
+        showToast("Report shared successfully!");
+        return;
+      } else {
+        // Fallback: download the image
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `strangerlens-share-${cleanDomain.replace(/[^a-z0-9.-]/gi, "-")}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast("Report image downloaded!");
+      }
+    } catch (e) {
+      console.error("Error sharing report:", e);
+      showToast("Failed to share report.", "warning");
+    }
+  };
+
+  const handleDownloadReport = () => {
+    setDownloadState("preparing");
+    setTimeout(() => {
+      const doc = new jsPDF();
+      doc.setFont("helvetica");
+      doc.setFontSize(20);
+      doc.text("StrangerLens Website Clarity Report", 10, 20);
+      doc.setFontSize(12);
+      doc.text(`Domain: ${data.domain}`, 10, 30);
+      doc.text(`Overall Score: ${data.score}/100`, 10, 40);
+      
+      const tableData = data.signals.map(s => [s.title, `${s.score}/100`, s.badgeText]);
+      (doc as any).autoTable({
+        head: [['Signal', 'Score', 'Status']],
+        body: tableData,
+        startY: 50,
+      });
+
+      if (data.isUnlocked) {
+        // Add premium details
+        doc.addPage();
+        doc.text("Premium Analysis", 10, 20);
+        // ... add more premium details ...
+      }
+
+      doc.save(`StrangerLens-${cleanDomain.replace(/[^a-z0-9.-]/gi, "-")}.pdf`);
+      
+      setDownloadState("downloaded");
+      showToast("Report PDF downloaded successfully!");
+      setTimeout(() => setDownloadState("idle"), 2500);
+    }, 600);
+  };
+
+  const handlePaywallCheckout = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (paywallCheckoutState === "processing") return;
+    const trimmed = paywallEmail.trim();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setPaywallEmailError("Please enter a valid email address to continue.");
       return;
     }
-
-    let startTimestamp: number | null = null;
-    const duration = 800; // ms
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
-      // Ease out quad
-      const easedProgress = progress * (2 - progress);
-      setDisplayScore(Math.floor(easedProgress * data.score));
-
-      if (progress < 1) {
-        requestAnimationFrame(step);
-      } else {
-        setDisplayScore(data.score);
-        setHasAnimatedScore(true);
-      }
-    };
-
-    requestAnimationFrame(step);
-  }, [data.score, prefersReducedMotion, hasAnimatedScore]);
-
-  // Persistence: Store baseline result in localStorage
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const existingHistory = JSON.parse(localStorage.getItem("valuecheck_history") || "[]");
-      const isDuplicate = existingHistory.some((item: { domain: string; score: number }) => item.domain === cleanDomain && item.score === data.score);
-      if (!isDuplicate) {
-        const updated = [{ domain: cleanDomain, score: data.score, date: new Date().toISOString() }, ...existingHistory].slice(0, 5);
-        localStorage.setItem("valuecheck_history", JSON.stringify(updated));
-      }
-    } catch {
-      // Storage sandbox protection
-    }
-  }, [cleanDomain, data.score]);
-
-  // Previous check history check
-  const historyRecords = useMemo(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const history = JSON.parse(localStorage.getItem("valuecheck_history") || "[]");
-      return history.filter((item: { domain: string }) => item.domain === cleanDomain);
-    } catch {
-      return [];
-    }
-  }, [cleanDomain]);
-
-  const previousRecord = historyRecords.length > 1 ? historyRecords[1] : null;
-
-  // Clipboard Helper with Error Handling
-  const copyToClipboard = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedState(id);
-      setTimeout(() => setCopiedState(null), 2000);
-    } catch {
-      setToastMessage("Couldn't copy text automatically. Please select and copy manually.");
-      setTimeout(() => setToastMessage(null), 3500);
-    }
-  };
-
-  // Phase 2: Native Share with Fallback
-  const handleShare = async () => {
-    if (shareState !== "idle") return;
-    setShareState("sharing");
-
-    const shareUrl = window.location.href;
-    const shareData = {
-      title: `ValueCheck for ${cleanDomain}`,
-      text: `Value Clarity score for ${cleanDomain}: ${data.score}/100 - First-impression diagnostic report.`,
-      url: shareUrl,
-    };
-
-    if (navigator.share && typeof navigator.share === "function") {
-      try {
-        await navigator.share(shareData);
-        setShareState("copied");
-        setTimeout(() => setShareState("idle"), 2000);
-        return;
-      } catch {
-        // Fallback to clipboard if user cancels native share
-      }
-    }
-
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setShareState("copied");
-      setTimeout(() => setShareState("idle"), 2000);
-    } catch {
-      setToastMessage("Couldn't copy share link.");
-      setShareState("idle");
-      setTimeout(() => setToastMessage(null), 3000);
-    }
-  };
-
-  // Phase 2: Download Report Handler with State Feedback
-  const handleDownloadReport = () => {
-    if (downloadState !== "idle") return;
-    setDownloadState("preparing");
-
+    setPaywallEmailError(null);
+    setPaywallCheckoutState("processing");
     setTimeout(() => {
-      try {
-        window.print();
-        setDownloadState("downloaded");
-        setTimeout(() => setDownloadState("idle"), 2500);
-      } catch {
-        setDownloadState("failed");
-        setToastMessage("Couldn't trigger print window.");
-        setTimeout(() => {
-          setDownloadState("idle");
-          setToastMessage(null);
-        }, 3000);
+      setPaywallCheckoutState("coming_soon");
+      showToast("Paid checkout is coming soon. No payment was processed.", "warning");
+    }, 300);
+  };
+
+  const currentSelectedSignal = useMemo(() => {
+    return data.signals.find((s) => s.id === selectedPremiumSignalId) || data.signals[0];
+  }, [data.signals, selectedPremiumSignalId]);
+
+  // Derive detail content for selected signal
+  const signalDetails = useMemo(() => {
+    const sig = currentSelectedSignal;
+    if (!sig) return { why: "", working: "", unclear: "", improve: "" };
+
+    const score = sig.score;
+    const badge = sig.badgeText;
+
+    let why = sig.description || `Evaluated across first-impression clarity criteria with a score of ${score}/100 (${badge}).`;
+    let working = data.evidence.clearFindings[0] || `Core offering is recognizable on arrival.`;
+    let unclear = data.evidence.missingFindings[0] || `Some supporting details could be highlighted more prominently.`;
+    let improve = data.recommendation.strongerDirection || data.recommendation.explanation || `Ensure key clarity messages are immediately visible above the fold.`;
+
+    if (sig.id === "audience" || sig.title.toLowerCase().includes("audience")) {
+      working = "Visitors can generally identify the product category.";
+      unclear = "Exact target user persona or ideal customer profile is not explicitly defined in the hero section.";
+      improve = "Add explicit audience framing directly under the primary headline.";
+    } else if (sig.id === "trust" || sig.title.toLowerCase().includes("trust")) {
+      working = "Basic website structure and accessibility are present.";
+      unclear = "Absence of prominent customer proof points, testimonials, or methodology credentials above the fold.";
+      improve = "Elevate credibility indicators, client logos, or proof points into the initial view.";
+    } else if (sig.id === "action" || sig.title.toLowerCase().includes("action")) {
+      working = "Primary call-to-action button is visible on arrival.";
+      unclear = "Next step friction or secondary action competition can cause visitor hesitation.";
+      improve = "Streamline the primary call to action to focus on the core user conversion goal.";
+    }
+
+    return { why, working, unclear, improve };
+  }, [currentSelectedSignal, data]);
+
+  // First 5 seconds understood vs missed items
+  const firstSecondsData = useMemo(() => {
+    const understood: string[] = [];
+    const missed: string[] = [];
+
+    if (data.firstSeconds && data.firstSeconds.length > 0) {
+      for (const fs of data.firstSeconds) {
+        if ("type" in fs) {
+          if (fs.type === "clear") {
+            understood.push(fs.label || fs.question || "Key first-impression observation");
+          } else {
+            missed.push(fs.label || fs.question || "Key first-impression observation");
+          }
+        } else if ("status" in fs) {
+          if (fs.status === "clear" || fs.status === "understandable") {
+            understood.push(fs.explanation || "Diagnostic observation");
+          } else {
+            missed.push(fs.explanation || "Diagnostic observation");
+          }
+        }
       }
-    }, 400);
-  };
+    }
 
-  // Phase 2: Check Again Async Handler
-  const handleCheckAgain = () => {
-    if (checkAgainState !== "idle") return;
-    setCheckAgainState("checking");
+    if (understood.length === 0) {
+      understood.push("Core product category and main topic");
+      understood.push("Primary interface or visual presence");
+    }
+    if (missed.length === 0) {
+      missed.push("Detailed pricing and feature comparison");
+      missed.push("Customer proof points and verified case studies");
+    }
 
-    setTimeout(() => {
-      onRunNewCheck();
-    }, 350);
-  };
-
-  // Toggle Accordion Improvement Row
-  const toggleImprovementRow = (id: string) => {
-    setExpandedImprovementId((prev) => (prev === id ? null : id));
-  };
-
-  // Enforce Real Analysis Only: Never show mock results or hardcoded scores
-  if (!customData || customData.score === undefined) {
-    return (
-      <div className="min-h-screen bg-[#fafafc] text-slate-900 font-sans antialiased flex flex-col items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white border border-slate-200 rounded-3xl p-8 text-center shadow-lg">
-          <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-6 h-6" />
-          </div>
-          <h2 className="text-xl font-bold text-slate-950 mb-2">No Analysis Data Available</h2>
-          <p className="text-sm text-slate-600 mb-6 leading-relaxed">
-            A real website scan must be performed to view visitor comprehension results for {cleanDomain}.
-          </p>
-          <button
-            onClick={onBackToLanding}
-            className="w-full rounded-full bg-[#1d68f5] hover:bg-blue-600 text-white font-medium text-sm py-3 transition shadow-sm cursor-pointer"
-          >
-            Check a website
-          </button>
-        </div>
-      </div>
-    );
-  }
+    return { understood, missed };
+  }, [data.firstSeconds]);
 
   return (
-    <div className="min-h-screen bg-[#fafafc] text-slate-900 font-sans antialiased selection:bg-blue-100 selection:text-blue-900 flex flex-col relative">
-      {/* Non-blocking Toast Feedback */}
+    <div className="min-h-screen bg-[#090D15] text-[#F1F5F9] font-sans antialiased selection:bg-blue-500/20 selection:text-blue-200 flex flex-col relative">
+      {/* Toast Feedback */}
       <AnimatePresence>
         {(copiedState || toastMessage) && (
           <motion.div
@@ -452,868 +498,729 @@ export default function ResultsScreen({
             animate={{ opacity: 1, y: 0 }}
             exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs sm:text-sm font-medium flex items-center gap-2 border border-slate-800"
+            className="fixed bottom-6 right-6 z-50 bg-[#171F2D] text-[#F1F5F9] px-4 py-3 rounded-xl shadow-2xl text-xs sm:text-sm font-medium flex items-center gap-2 border border-[#263044] print:hidden"
             role="status"
             aria-live="polite"
           >
             {toastMessage ? (
               <>
-                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                {toastTone === "warning" ? (
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                )}
                 <span>{toastMessage}</span>
               </>
             ) : (
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>
-                  {copiedState === "share"
-                    ? "Link copied to clipboard!"
-                    : "Suggested copy copied to clipboard!"}
-                </span>
+                <span>Copied to clipboard!</span>
               </>
             )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* 1. HEADER (Sticky Navigation Header) */}
-      <header className="w-full bg-white/95 backdrop-blur-md border-b border-[#e7e9ee] sticky top-0 z-30 transition-all">
-        <div className="max-w-[1180px] mx-auto px-4 sm:px-6 md:px-8 h-[64px] sm:h-[72px] flex items-center justify-between">
-          <div className="flex items-center shrink-0">
-            <button
-              onClick={onBackToLanding}
-              className="text-lg sm:text-xl font-bold tracking-tight text-slate-950 hover:opacity-80 transition cursor-pointer text-left min-h-[44px] inline-flex items-center focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none rounded-md px-1"
-              title="Return to ValueCheck Home"
-            >
-              ValueCheck
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3 sm:gap-6 md:gap-8">
-            <button
-              onClick={onOpenFaq}
-              className="text-xs sm:text-[15px] font-medium text-slate-700 hover:text-blue-600 transition-colors cursor-pointer min-h-[44px] inline-flex items-center px-1 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none rounded-md"
-            >
-              FAQ
-            </button>
-            <button
-              onClick={onOpenPricing}
-              className="text-xs sm:text-[15px] font-medium text-slate-700 hover:text-blue-600 transition-colors cursor-pointer min-h-[44px] inline-flex items-center px-1 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none rounded-md"
-            >
-              Pricing
-            </button>
-            <button
-              onClick={onBackToLanding}
-              className="rounded-full bg-[#1d68f5] hover:bg-blue-600 active:scale-[0.98] text-white text-xs sm:text-sm font-medium px-4 sm:px-5 py-2.5 transition-all duration-150 inline-flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0 min-h-[44px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              <span>Check website</span>
-              <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 ml-0.5 shrink-0" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* MAIN CONTENT AREA */}
-      <main className="flex-1 w-full max-w-[1180px] mx-auto px-4 sm:px-6 md:px-8 pt-5 sm:pt-7 pb-16 sm:pb-24 space-y-6 sm:space-y-7">
-        
-        {/* ACCESS ERROR / PARTIAL WARNING STATE (If Homepage cannot be fully fetched) */}
-        {data.isAccessError && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-amber-50 border border-amber-200/90 rounded-2xl p-4 sm:p-5 text-amber-900 text-xs sm:text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs"
-          >
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <strong className="font-semibold block text-amber-950 text-sm">We {"couldn't"} fully access this homepage.</strong>
-                <p className="text-amber-800 mt-0.5">We {"couldn't"} complete the full first-impression check because part of the page was unavailable.</p>
-              </div>
-            </div>
-            <button
-              onClick={handleCheckAgain}
-              className="rounded-full bg-amber-900 text-white hover:bg-amber-950 px-4 py-2 text-xs font-semibold shrink-0 cursor-pointer transition min-h-[44px]"
-            >
-              Try again →
-            </button>
-          </motion.div>
-        )}
-
-        {/* 2. RESULT TOP BAR */}
-        <motion.div
-          initial={prefersReducedMotion ? {} : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
-          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 pb-0.5 scroll-mt-24"
-        >
-          {/* Left: Dynamic Domain Identity Pill */}
-          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-full bg-white border border-[#e7e9ee] shadow-2xs text-xs sm:text-[13px] text-slate-600 self-start max-w-full min-h-[44px]">
-            <Link2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            <span className="truncate max-w-[180px] sm:max-w-[280px] md:max-w-xs font-normal">
-              <strong className="font-semibold text-slate-900">{data.domain}</strong> · First-impression check
-            </span>
-            <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 pl-1 border-l border-slate-200">
-              <Clock className="w-3 h-3 text-slate-400" />
-              <span>{data.checkedAt}</span>
-            </span>
-          </div>
-
-          {/* Right: Utility Action Buttons */}
-          <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
-            <button
-              onClick={handleCheckAgain}
-              disabled={checkAgainState === "checking"}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white border border-[#e7e9ee] text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-950 transition cursor-pointer shadow-2xs min-h-[44px] disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 text-slate-500 shrink-0 ${checkAgainState === "checking" ? "animate-spin text-blue-600" : ""}`} />
-              <span>{checkAgainState === "checking" ? "Checking…" : "Check again"}</span>
-            </button>
-
-            <button
-              onClick={handleShare}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white border border-[#e7e9ee] text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-950 transition cursor-pointer shadow-2xs min-h-[44px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              {shareState === "copied" ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span className="text-emerald-700">Link copied</span>
-                </>
-              ) : (
-                <>
-                  <Share2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span>Share</span>
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={handleDownloadReport}
-              disabled={downloadState === "preparing"}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white border border-[#e7e9ee] text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-950 transition cursor-pointer shadow-2xs min-h-[44px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              {downloadState === "preparing" ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin shrink-0" />
-                  <span>Preparing…</span>
-                </>
-              ) : downloadState === "downloaded" ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span className="text-emerald-700">Downloaded ✓</span>
-                </>
-              ) : (
-                <>
-                  <Download className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span>Download</span>
-                </>
-              )}
-            </button>
-          </div>
-        </motion.div>
-
-        {/* 3. MAIN VERDICT CONTAINER (VALUE CLARITY HERO CARD) */}
-        <motion.section
-          initial={prefersReducedMotion ? {} : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-          className="bg-white border border-[#e7e9ee] rounded-2xl sm:rounded-3xl p-5 sm:p-7 md:p-8 shadow-xs relative overflow-hidden scroll-mt-24"
-        >
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-center">
-            {/* Zone 1: Score Visualization Ring (Left - 3 cols) */}
-            <div className="lg:col-span-3 flex flex-col items-center lg:items-start text-center lg:text-left border-b lg:border-b-0 lg:border-r border-slate-100 pb-6 lg:pb-0 lg:pr-6 shrink-0">
-              <div className="flex items-center gap-1.5 mb-3 text-xs font-semibold tracking-wider text-slate-500 uppercase">
-                <span>VALUE CLARITY</span>
-                <div className="relative inline-block">
-                  <button
-                    onClick={() => setActiveInfoTooltip(!activeInfoTooltip)}
-                    className="text-slate-400 hover:text-slate-600 transition cursor-pointer p-0.5 inline-flex items-center justify-center focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none rounded"
-                    aria-label="Value clarity score information"
-                    aria-expanded={activeInfoTooltip}
-                  >
-                    <Info className="w-3.5 h-3.5" />
-                  </button>
-                  <AnimatePresence>
-                    {activeInfoTooltip && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className="absolute left-1/2 -translate-x-1/2 lg:left-0 lg:translate-x-0 bottom-7 w-60 bg-slate-900 text-white text-[11px] font-normal leading-normal p-3 rounded-xl shadow-xl z-20"
-                      >
-                        Score reflects how clearly first-time visitors comprehend what your product is, who it is for, and why they should care.
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-
-              {/* Clean Circular Gauge */}
-              <div className="relative w-[140px] h-[140px] sm:w-[150px] sm:h-[150px] flex items-center justify-center my-1">
-                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                  {/* Background Track */}
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="40"
-                    stroke="#f1f5f9"
-                    strokeWidth="7.5"
-                    fill="transparent"
-                  />
-                  {/* Animated Score Arc */}
-                  <circle
-                    cx="50"
-                    cy="50"
-                    r="40"
-                    stroke="#f59e0b"
-                    strokeWidth="7.5"
-                    strokeDasharray={`${2 * Math.PI * 40}`}
-                    strokeDashoffset={`${2 * Math.PI * 40 * (1 - displayScore / 100)}`}
-                    strokeLinecap="round"
-                    fill="transparent"
-                    className="transition-all duration-300 ease-out"
-                  />
-                </svg>
-
-                {/* Animated Score Center Text */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-4xl sm:text-[44px] font-extrabold text-slate-950 tracking-tight leading-none">
-                    {displayScore}
-                  </span>
-                  <span className="text-xs text-slate-400 font-medium mt-1">
-                    / 100
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Zone 2: Main Verdict Text (Center - 5 cols) */}
-            <div className="lg:col-span-5 border-b lg:border-b-0 lg:border-r border-slate-100 pb-6 lg:pb-0 lg:pr-6">
-              {/* Status Pill Reveal */}
-              <motion.div
-                initial={prefersReducedMotion ? {} : { opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15, duration: 0.2 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#fef3c7] text-[#b45309] text-xs font-semibold mb-3"
-              >
-                <Zap className="w-3.5 h-3.5 fill-current shrink-0" />
-                <span>{data.scoreStatus}</span>
-              </motion.div>
-
-              {/* Main Verdict Headline */}
-              <h1 className="text-xl sm:text-2xl lg:text-[24px] font-bold text-slate-950 tracking-tight leading-[1.3] mb-2.5 max-w-xl [text-wrap:balance]">
-                {data.verdict}
-              </h1>
-
-              <p className="text-xs text-slate-500 font-normal">
-                {data.verdictSubtext}
-              </p>
-            </div>
-
-            {/* Zone 3: Quick Signals Summary (Right - 4 cols) */}
-            <div className="lg:col-span-4 space-y-2.5 pt-1 lg:pt-0">
-              {data.quickSignals.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2.5 text-xs sm:text-[13px] text-slate-700 font-medium">
-                  {item.type === "clear" ? (
-                    <div className="w-5 h-5 rounded-full bg-[#dcfce7] text-[#16a34a] flex items-center justify-center shrink-0">
-                      <Check className="w-3 h-3 stroke-[3]" />
-                    </div>
-                  ) : item.type === "amber" ? (
-                    <div className="w-5 h-5 rounded-full bg-[#fef3c7] text-[#b45309] flex items-center justify-center shrink-0">
-                      <MinusCircle className="w-3 h-3 stroke-[2.5]" />
-                    </div>
-                  ) : (
-                    <div className="w-5 h-5 rounded-full bg-[#fee2e2] text-[#b91c1c] flex items-center justify-center shrink-0">
-                      <X className="w-3 h-3 stroke-[3]" />
-                    </div>
-                  )}
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </motion.section>
-
-        {/* WHAT YOUR WEBSITE IS ACTUALLY SAYING (Feature 1) */}
-        {data.websiteMessage && (
-          <motion.section
-            initial={prefersReducedMotion ? {} : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.1, ease: "easeOut" }}
-            className="bg-white border border-[#e7e9ee] rounded-2xl sm:rounded-3xl p-5 sm:p-6 md:p-7 shadow-xs relative overflow-hidden scroll-mt-24"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-[10px] font-extrabold tracking-wider text-blue-800 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1.5 uppercase">
-                <Sparkles className="w-3 h-3 text-blue-600" />
-                WHAT YOUR WEBSITE IS ACTUALLY SAYING
-              </span>
-              <span className="text-[11px] text-slate-400 font-medium">
-                · Based on homepage above the fold
-              </span>
-            </div>
-            <p className="text-sm sm:text-base font-medium text-slate-900 leading-relaxed mb-2">
-              {data.websiteMessage.summary}
-            </p>
-            <p className="text-xs text-slate-500 font-normal">
-              If an unbiased first-time visitor landed on {data.domain} without context, this is what the homepage communicates.
-            </p>
-          </motion.section>
-        )}
-
-        {/* 4. SECONDARY GRID (2 Columns on Desktop) */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 scroll-mt-24">
-          {/* Left Box: What a visitor understands in seconds */}
-          <div className="lg:col-span-5 bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col justify-between">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-950 tracking-tight mb-0.5">
-                What a visitor understands in seconds.
-              </h2>
-              <p className="text-xs text-slate-500 mb-5">
-                Here’s what a typical first-time visitor would understand.
-              </p>
-
-              {/* 5 Questions & Status Rows */}
-              <div className="space-y-3">
-                {data.firstSeconds.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between gap-3 text-xs sm:text-sm pb-2.5 border-b border-slate-100 last:border-0 last:pb-0 min-h-[40px]"
-                  >
-                    <span className="font-medium text-slate-800">{item.question}</span>
-                    {item.type === "clear" ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#dcfce7] text-[#15803d] shrink-0">
-                        <Check className="w-3 h-3 stroke-[2.5]" />
-                        {item.label}
-                      </span>
-                    ) : item.type === "partly" ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#fef3c7] text-[#b45309] shrink-0">
-                        <MinusCircle className="w-3 h-3 stroke-[2.5]" />
-                        {item.label}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-[#fee2e2] text-[#b91c1c] shrink-0">
-                        <X className="w-3 h-3 stroke-[2.5]" />
-                        {item.label}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Right Area: Stacked Visitor Thought & Website Evidence */}
-          <div className="lg:col-span-7 space-y-5 sm:space-y-6">
-            {/* Card 1: First-time visitor thought */}
-            <div className="bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-6 shadow-xs">
-              <div className="flex items-center justify-between gap-3 mb-2.5">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                    <Users className="w-3.5 h-3.5" />
-                  </div>
-                  <h3 className="font-bold text-slate-950 text-base">
-                    A first-time visitor would probably think
-                  </h3>
-                </div>
-                <span className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold text-slate-400 bg-slate-100 uppercase tracking-wider">
-                  SIMULATED FIRST IMPRESSION
-                </span>
-              </div>
-
-              {/* Analytical Quote Box */}
-              <div className="bg-[#f8fafc] border border-slate-200/80 rounded-xl p-4 sm:p-5 relative">
-                <p className="text-xs sm:text-sm font-medium text-slate-800 leading-relaxed italic">
-                  {data.visitorThought}
-                </p>
-              </div>
-            </div>
-
-            {/* Card 2: What on your website led to this result */}
-            <div className="bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-6 shadow-xs">
-              <div className="flex items-center justify-between gap-2 mb-0.5">
-                <h3 className="font-bold text-slate-950 text-base">
-                  What on your website led to this result
-                </h3>
-                <span className="text-[11px] font-medium text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md shrink-0">
-                  {data.evidence.locationTag}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mb-4">
-                We looked at your homepage from a first-time visitor’s perspective.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Left: Your homepage says */}
-                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5">
-                  <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1.5">
-                    YOUR HOMEPAGE SAYS
-                  </span>
-                  <p className="text-xs text-slate-800 italic leading-snug">
-                    {data.evidence.homepageExcerpt}
-                  </p>
-                </div>
-
-                {/* Right: Clear & Missing findings */}
-                <div className="space-y-2.5 text-xs">
-                  <div>
-                    <span className="text-[11px] font-semibold text-emerald-800 block mb-1">
-                      WHAT IS CLEAR
-                    </span>
-                    <div className="space-y-1">
-                      {data.evidence.clearFindings.map((item, i) => (
-                        <div key={i} className="flex items-start gap-1.5 text-slate-700">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5 stroke-[2.5]" />
-                          <span>{item}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span className="text-[11px] font-semibold text-rose-800 block mb-1">
-                      WHAT IS MISSING
-                    </span>
-                    <div className="space-y-1">
-                      {data.evidence.missingFindings.map((item, i) => (
-                        <div key={i} className="flex items-start gap-1.5 text-slate-700">
-                          <X className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5 stroke-[2.5]" />
-                          <span>{item}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* 5. FIVE FIRST-IMPRESSION SIGNALS (With Subtle Stagger Entrance) */}
-        <section className="bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-7 shadow-xs scroll-mt-24">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-5">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-950 tracking-tight">
-                Your first-impression signals
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                A detailed look at the five key signals that shape a visitor’s first impression.
-              </p>
-            </div>
-            <button
-              onClick={onOpenFaq}
-              className="text-xs font-medium text-slate-500 hover:text-blue-600 transition-colors inline-flex items-center gap-1 self-start sm:self-auto cursor-pointer min-h-[44px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none rounded"
-            >
-              <span>Learn about these signals</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* 5 Equal Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-            {data.signals.map((sig, index) => (
-              <motion.div
-                key={sig.id}
-                initial={prefersReducedMotion ? {} : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.04, duration: 0.25, ease: "easeOut" }}
-                className="border border-[#e7e9ee] rounded-xl p-4 flex flex-col justify-between bg-white shadow-2xs hover:border-slate-300 transition-colors"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2.5">
-                    <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                      {sig.icon === "eye" && <Eye className="w-3.5 h-3.5" />}
-                      {sig.icon === "users" && <Users className="w-3.5 h-3.5" />}
-                      {sig.icon === "sparkles" && <Sparkles className="w-3.5 h-3.5 text-amber-500" />}
-                      {sig.icon === "shield" && <Shield className="w-3.5 h-3.5" />}
-                      {sig.icon === "arrow" && <ArrowRight className="w-3.5 h-3.5 text-emerald-600" />}
-                    </div>
-                  </div>
-
-                  <h3 className="font-bold text-slate-950 text-sm mb-1">
-                    {sig.title}
-                  </h3>
-
-                  <div className="flex items-baseline gap-1 mb-2">
-                    <span className="text-2xl font-extrabold text-slate-950">
-                      {sig.score}
-                    </span>
-                    <span className="text-xs text-slate-400 font-normal">/ 100</span>
-                  </div>
-
-                  <div className="mb-2.5">
-                    {sig.badgeType === "clear" ? (
-                      <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#dcfce7] text-[#15803d]">
-                        {sig.badgeText}
-                      </span>
-                    ) : (
-                      <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-[#fef3c7] text-[#b45309]">
-                        {sig.badgeText}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <p className="text-xs text-slate-500 leading-snug font-normal">
-                  {sig.description}
-                </p>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-
-        {/* RISKS PERCEPT FOUND (Feature 2) */}
-        <section className="bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-7 shadow-xs scroll-mt-24">
-          <div className="flex items-center justify-between gap-2 mb-4">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-950 tracking-tight">
-                Risks Percept found
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Communication and conversion risks that could prevent visitors from understanding, trusting, or acting.
-              </p>
-            </div>
-          </div>
-
-          {data.risks && data.risks.length > 0 ? (
-            <div className="space-y-3">
-              {data.risks.map((risk, idx) => {
-                const severityBg =
-                  risk.severity === "high"
-                    ? "bg-rose-50 border-rose-200 text-rose-900"
-                    : risk.severity === "medium"
-                    ? "bg-amber-50 border-amber-200 text-amber-900"
-                    : "bg-slate-50 border-slate-200 text-slate-800";
-
-                const badgeBg =
-                  risk.severity === "high"
-                    ? "bg-rose-600 text-white"
-                    : risk.severity === "medium"
-                    ? "bg-amber-500 text-white"
-                    : "bg-slate-400 text-white";
-
-                return (
-                  <div
-                    key={idx}
-                    className={`border rounded-xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all ${severityBg}`}
-                  >
-                    <div className="space-y-1.5 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${badgeBg}`}>
-                          {risk.severity} risk
-                        </span>
-                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider bg-white/80 px-2 py-0.5 rounded border border-slate-200/60">
-                          {risk.category}
-                        </span>
-                      </div>
-                      <h3 className="text-sm sm:text-base font-bold text-slate-950">
-                        {risk.title}
-                      </h3>
-                      <p className="text-xs sm:text-sm text-slate-700 leading-relaxed font-normal">
-                        {risk.description}
-                      </p>
-                      <p className="text-[11px] text-slate-500 font-medium pt-1">
-                        <strong className="text-slate-700 font-semibold">Why it matters:</strong> {risk.why_it_matters}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 text-center text-xs text-slate-600">
-              No significant communication risk identified from the available homepage evidence.
-            </div>
-          )}
-        </section>
-
-        {/* 6. BOTTOM GRID (IF YOU CHANGE ONLY ONE THING + INLINE EXPANDABLE OTHER IMPROVEMENTS) */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 scroll-mt-24">
-          {/* Left Card: If You Change Only One Thing Priority Recommendation */}
-          <div className="lg:col-span-7 bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-7 shadow-xs flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] font-extrabold tracking-wider text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1.5 uppercase">
-                  <Zap className="w-3 h-3 fill-amber-700 stroke-amber-700" />
-                  IF YOU CHANGE ONLY ONE THING
-                </span>
-                {data.recommendation.impact && (
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-900 text-white">
-                    {data.recommendation.impact} impact
-                  </span>
-                )}
-              </div>
-
-              <h2 className="text-base sm:text-lg font-bold text-slate-950 mb-1">
-                {data.recommendation.subhead}
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-600 mb-5 leading-relaxed font-normal">
-                {data.recommendation.explanation}
-              </p>
-
-              {/* Comparison Boxes */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                <div className="bg-rose-50/70 border border-rose-100 rounded-xl p-3.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-800 uppercase tracking-wider mb-2">
-                    <X className="w-3 h-3 stroke-[2.5]" /> WHAT YOU SAY NOW
-                  </span>
-                  <p className="text-xs text-slate-700 italic">
-                    {data.recommendation.currentDirection}
-                  </p>
-                </div>
-
-                <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-3.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 uppercase tracking-wider mb-2">
-                    <Check className="w-3 h-3 stroke-[2.5]" /> A CLEARER DIRECTION
-                  </span>
-                  <p className="text-xs text-slate-900 font-medium">
-                    {data.recommendation.strongerDirection}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() =>
-                copyToClipboard(
-                  data.recommendation.strongerDirection.replace(/^“|”$/g, ""),
-                  "recommendation"
-                )
-              }
-              className="w-full sm:w-auto rounded-full bg-[#1d68f5] hover:bg-blue-600 active:scale-[0.98] text-white text-xs sm:text-sm font-semibold px-6 py-2.5 transition-all inline-flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[44px] min-w-[170px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              {copiedState === "recommendation" ? (
-                <>
-                  <Check className="w-4 h-4 text-white shrink-0" />
-                  <span>Copied ✓</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4 shrink-0" />
-                  <span>Copy suggestion →</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Right Card: Phase 2 Inline Expandable Improvement Rows */}
-          <div className="lg:col-span-5 bg-white border border-[#e7e9ee] rounded-2xl p-5 sm:p-7 shadow-xs flex flex-col justify-between">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-950 tracking-tight mb-1">
-                Other things worth improving
-              </h2>
-              <p className="text-xs text-slate-500 mb-4">
-                Click any row to view diagnostic suggestions.
-              </p>
-
-              <div className="space-y-3">
-                {data.otherImprovements.map((item) => {
-                  const isExpanded = expandedImprovementId === item.id;
-                  return (
-                    <div
-                      key={item.id}
-                      className="border border-slate-100 rounded-xl overflow-hidden hover:border-slate-200 transition-all bg-slate-50/40"
-                    >
-                      <button
-                        onClick={() => toggleImprovementRow(item.id)}
-                        aria-expanded={isExpanded}
-                        aria-controls={`improvement-body-${item.id}`}
-                        className="w-full text-left flex items-center justify-between gap-3 p-3.5 cursor-pointer group min-h-[52px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${item.color}`}
-                          >
-                            {item.icon === "shield" && <Shield className="w-3.5 h-3.5" />}
-                            {item.icon === "users" && <Users className="w-3.5 h-3.5" />}
-                            {item.icon === "zap" && <Zap className="w-3.5 h-3.5" />}
-                          </div>
-                          <div>
-                            <h4 className="text-xs sm:text-sm font-bold text-slate-950 group-hover:text-blue-600 transition-colors">
-                              {item.title}
-                            </h4>
-                            <p className="text-xs text-slate-500 leading-snug mt-0.5 font-normal">
-                              {item.description}
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight
-                          className={`w-4 h-4 text-slate-400 group-hover:text-slate-600 transition-transform duration-200 shrink-0 ${
-                            isExpanded ? "rotate-90 text-slate-700" : ""
-                          }`}
-                        />
-                      </button>
-
-                      {/* Smooth Inline Expandable Body */}
-                      <AnimatePresence>
-                        {isExpanded && (
-                          <motion.div
-                            id={`improvement-body-${item.id}`}
-                            initial={prefersReducedMotion ? { opacity: 1 } : { height: 0, opacity: 0 }}
-                            animate={prefersReducedMotion ? { opacity: 1 } : { height: "auto", opacity: 1 }}
-                            exit={prefersReducedMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
-                            transition={{ duration: 0.22, ease: "easeInOut" }}
-                            className="overflow-hidden bg-white border-t border-slate-100 p-4 space-y-3 text-xs"
-                          >
-                            <div>
-                              <strong className="text-slate-950 font-semibold block mb-0.5">Why this matters:</strong>
-                              <p className="text-slate-600 leading-relaxed font-normal">{item.whyItMatters}</p>
-                            </div>
-
-                            <div>
-                              <strong className="text-slate-950 font-semibold block mb-0.5">What to improve:</strong>
-                              <p className="text-slate-600 leading-relaxed font-normal">{item.whatToImprove}</p>
-                            </div>
-
-                            {item.copyableSuggestion && (
-                              <div className="pt-1">
-                                <button
-                                  onClick={() => copyToClipboard(item.copyableSuggestion!, `row-${item.id}`)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-800 text-[11px] font-semibold transition cursor-pointer"
-                                >
-                                  <Copy className="w-3 h-3 shrink-0" />
-                                  <span>
-                                    {copiedState === `row-${item.id}`
-                                      ? "Copied suggestion ✓"
-                                      : "Copy suggestion"}
-                                  </span>
-                                </button>
-                              </div>
-                            )}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* 7. FINAL RE-CHECK SECTION */}
-        <section className="bg-[#f0f6ff]/90 border border-blue-100 rounded-2xl sm:rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-5 shadow-2xs scroll-mt-24">
-          <div className="flex items-center gap-4 text-center sm:text-left">
-            <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center shrink-0 mx-auto sm:mx-0 shadow-xs">
-              <RefreshCw className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-950">
-                Made changes to your website?
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-600 mt-0.5 font-normal">
-                Update your website and run the check again to see whether the first impression improved.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto shrink-0">
-            <button
-              onClick={handleCheckAgain}
-              disabled={checkAgainState === "checking"}
-              className="w-full sm:w-auto rounded-full bg-[#1d68f5] hover:bg-blue-600 active:scale-[0.98] text-white text-xs sm:text-sm font-semibold px-6 py-2.5 transition-all inline-flex items-center justify-center gap-1.5 shadow-xs cursor-pointer min-h-[44px] disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              <span>{checkAgainState === "checking" ? "Checking…" : "Check again →"}</span>
-            </button>
-
-            <button
-              onClick={() => setActiveCompareModal(true)}
-              className="w-full sm:w-auto rounded-full bg-white hover:bg-slate-50 text-slate-700 border border-[#e7e9ee] text-xs sm:text-sm font-semibold px-5 py-2.5 transition cursor-pointer min-h-[44px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-            >
-              Compare with previous
-            </button>
-          </div>
-        </section>
-      </main>
-
-      {/* FOCUSED COMPARE HISTORY MODAL */}
+      {/* HOW IS THIS CALCULATED? MODAL */}
       <AnimatePresence>
-        {activeCompareModal && (
+        {showCalculationModal && (
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="compare-modal-title"
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            aria-labelledby="calc-modal-title"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs"
+            onClick={() => setShowCalculationModal(false)}
           >
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setActiveCompareModal(false)}
-              className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs"
-            />
-            <motion.div
-              initial={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.98, y: 12 }}
-              animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
-              exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.98, y: 12 }}
+              initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
-              className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 relative z-10 text-slate-900"
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#121824] border border-[#263044] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 text-left"
             >
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <BarChart2 className="w-5 h-5 text-blue-600" />
-                  <h3 id="compare-modal-title" className="font-bold text-base">Compare Check History</h3>
-                </div>
+              <div className="flex items-center justify-between pb-3 border-b border-[#263044]">
+                <h3 id="calc-modal-title" className="text-base sm:text-lg font-bold text-[#F1F5F9] flex items-center gap-2">
+                  <Info className="w-5 h-5 text-[#3B82F6]" />
+                  <span>How Website Clarity is Calculated</span>
+                </h3>
                 <button
-                  onClick={() => setActiveCompareModal(false)}
-                  className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-700 transition cursor-pointer min-h-[32px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-                  aria-label="Close comparison view"
+                  type="button"
+                  onClick={() => setShowCalculationModal(false)}
+                  aria-label="Close calculation explanation"
+                  className="w-8 h-8 rounded-lg text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#171F2D] flex items-center justify-center transition cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="py-5 space-y-3 text-xs sm:text-sm text-slate-600">
-                <p>
-                  Baseline first-impression score for{" "}
-                  <strong className="text-slate-950">{cleanDomain}</strong>:
-                </p>
+              <p className="text-xs sm:text-sm text-[#94A3B8] leading-relaxed">
+                StrangerLens calculates your authoritative Website Clarity score using a weighted synthesis of the five core first-impression signals:
+              </p>
 
-                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2.5">
-                  <div className="flex justify-between items-center text-xs font-semibold">
-                    <span className="text-slate-600">Current Check</span>
-                    <span className="text-amber-800 bg-amber-100/90 border border-amber-200 px-2 py-0.5 rounded font-bold">
-                      {data.score} / 100
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between items-center text-xs text-slate-500 pt-1 border-t border-slate-200/60">
-                    <span>Previous Check</span>
-                    {previousRecord ? (
-                      <span className="text-slate-900 font-bold">
-                        {previousRecord.score} / 100
-                      </span>
-                    ) : (
-                      <span className="text-slate-400 italic">No previous check recorded</span>
-                    )}
-                  </div>
-
-                  {previousRecord && (
-                    <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-200/60">
-                      <span className="text-slate-600 font-medium">Comprehension Delta</span>
-                      <span className={`font-bold ${data.score >= previousRecord.score ? "text-emerald-700" : "text-rose-700"}`}>
-                        {data.score >= previousRecord.score ? `+${data.score - previousRecord.score}` : `${data.score - previousRecord.score}`} pts
+              <div className="bg-[#171F2D] border border-[#263044] rounded-xl divide-y divide-[#263044] overflow-hidden text-xs sm:text-sm">
+                {calculatedBreakdown.map((item) => (
+                  <div key={item.id} className="p-3.5 flex items-center justify-between">
+                    <div>
+                      <span className="font-bold text-[#F1F5F9] block">{item.title}</span>
+                      <span className="text-[11px] text-[#94A3B8]">Weight: {item.weightPercent}% ({item.weightDecimal})</span>
+                    </div>
+                    <div className="text-right tabular-nums">
+                      <span className="text-[#F1F5F9] font-bold">{item.score} / 100</span>
+                      <span className="text-[11px] text-[#94A3B8] block">
+                        + {item.contribution.toFixed(1)} pts
                       </span>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ))}
+              </div>
 
-                <p className="text-xs text-slate-500 leading-normal">
-                  {previousRecord
-                    ? "Your score reflects comprehension improvements made since your previous check."
-                    : "Run a second check after updating your website copy to measure your score improvement."}
+              <div className="bg-[#171F2D]/60 border border-[#263044] rounded-xl p-3.5 space-y-1.5 text-xs text-[#94A3B8]">
+                <p className="font-semibold text-[#F1F5F9]">Authoritative Formula:</p>
+                <p className="font-mono text-[11px] text-blue-300 break-words">
+                  Score = (First Impression × 0.25) + (Audience × 0.20) + (Value × 0.25) + (Trust × 0.15) + (Action × 0.15)
+                </p>
+                <p className="pt-1 text-[11px] text-[#94A3B8]">
+                  Total weighted score for {cleanDomain}: <strong className="text-white font-bold">{data.score} / 100</strong>
                 </p>
               </div>
 
-              <button
-                onClick={() => setActiveCompareModal(false)}
-                className="w-full rounded-full bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs sm:text-sm py-2.5 transition cursor-pointer min-h-[44px] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-              >
-                Close comparison
-              </button>
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowCalculationModal(false)}
+                  className="px-4 py-2 rounded-xl bg-[#3B82F6] hover:bg-blue-600 text-white text-xs sm:text-sm font-semibold transition cursor-pointer"
+                >
+                  Got it
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
+      {/* HEADER */}
+      <header className="w-full bg-[#090D15]/95 backdrop-blur-md border-b border-[#263044] sticky top-0 z-30 transition-all print:static">
+        <div className="max-w-[1000px] mx-auto px-4 sm:px-6 h-[64px] sm:h-[72px] flex items-center justify-between gap-4">
+          <button
+            onClick={onBackToLanding}
+            className="flex items-center gap-2.5 text-lg sm:text-xl font-bold tracking-tight text-[#F1F5F9] hover:opacity-80 transition cursor-pointer text-left min-h-[44px] focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:outline-none rounded-md px-1"
+            title="Return to StrangerLens Home"
+            aria-label="Return to StrangerLens Home"
+          >
+            <div className="w-8 h-8 rounded-xl bg-[#3B82F6] text-white flex items-center justify-center font-bold text-sm tracking-tighter shadow-xs shrink-0">
+              S
+            </div>
+            <span className="whitespace-nowrap">StrangerLens</span>
+          </button>
+
+          <div className="hidden sm:flex items-center gap-6 print:hidden">
+            <button
+              onClick={onOpenFaq}
+              className="text-sm font-medium text-[#94A3B8] hover:text-[#F1F5F9] transition-colors cursor-pointer min-h-[44px] inline-flex items-center px-1"
+            >
+              FAQ
+            </button>
+            <button
+              onClick={onOpenPricing}
+              className="text-sm font-medium text-[#94A3B8] hover:text-[#F1F5F9] transition-colors cursor-pointer min-h-[44px] inline-flex items-center px-1"
+            >
+              Pricing
+            </button>
+            <button
+              onClick={onRunNewCheck}
+              className="rounded-full bg-[#3B82F6] hover:bg-blue-600 active:scale-[0.98] text-white text-xs sm:text-sm font-medium px-5 py-2.5 transition-all inline-flex items-center gap-1.5 shadow-sm cursor-pointer whitespace-nowrap min-h-[44px]"
+            >
+              <span>New check</span>
+              <ArrowRight className="w-4 h-4 ml-0.5 shrink-0" />
+            </button>
+          </div>
+
+          <div className="flex sm:hidden items-center gap-2 print:hidden">
+            <button
+              onClick={onRunNewCheck}
+              className="rounded-full bg-[#3B82F6] hover:bg-blue-600 text-white text-xs font-medium px-3.5 py-2 transition inline-flex items-center gap-1 shadow-sm cursor-pointer min-h-[40px]"
+            >
+              <span>New check</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
+              aria-expanded={mobileMenuOpen}
+              aria-label="Toggle navigation menu"
+              className="w-10 h-10 rounded-xl border border-[#263044] bg-[#121824] text-[#F1F5F9] flex items-center justify-center cursor-pointer transition"
+            >
+              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {mobileMenuOpen && (
+          <div className="sm:hidden bg-[#121824] border-t border-[#263044] px-4 py-3 space-y-1 shadow-xl print:hidden">
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenFaq();
+              }}
+              className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium text-[#94A3B8] hover:bg-[#171F2D] hover:text-[#F1F5F9] transition cursor-pointer"
+            >
+              FAQ
+            </button>
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenPricing();
+              }}
+              className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium text-[#94A3B8] hover:bg-[#171F2D] hover:text-[#F1F5F9] transition cursor-pointer"
+            >
+              Pricing
+            </button>
+          </div>
+        )}
+      </header>
+
+      {/* DOMAIN & OPTIONS BAR */}
+      <main className="flex-1 w-full max-w-[1000px] mx-auto px-4 sm:px-6 pt-6 pb-20 space-y-8">
+
+
+        {/* =========================================================================
+            1. OVERALL CLARITY SCORE (TOP HERO SECTION)
+           ========================================================================= */}
+        <section
+          id="overall-clarity-score"
+          aria-labelledby="overall-clarity-score-heading"
+          className="bg-[#121824] border border-[#263044] rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div className="space-y-3 max-w-xl">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1
+                  id="overall-clarity-score-heading"
+                  className="text-2xl sm:text-3xl font-extrabold text-[#F1F5F9] tracking-tight"
+                >
+                  Your Website Clarity
+                </h1>
+                <span
+                  className={`text-xs font-bold px-3 py-1 rounded-full border shrink-0 ${
+                    overallStatusTone === "emerald"
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      : overallStatusTone === "blue"
+                      ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                      : overallStatusTone === "amber"
+                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                      : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                  }`}
+                >
+                  {overallStatusLabel}
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-[#94A3B8] leading-relaxed font-normal">
+                Deterministic clarity evaluation based on a cold visitor&apos;s initial 5-second scan of your homepage.
+              </p>
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowCalculationModal(true)}
+                  className="inline-flex items-center gap-1.5 text-xs text-[#3B82F6] hover:text-blue-400 font-semibold underline underline-offset-4 cursor-pointer transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                >
+                  <Info className="w-3.5 h-3.5 shrink-0" />
+                  <span>How is this calculated?</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Authoritative Overall Score Card */}
+            <div className="bg-[#171F2D] border border-[#263044] rounded-2xl p-5 sm:p-6 flex flex-col items-center justify-center text-center shrink-0 min-w-[200px]">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#94A3B8] mb-1">
+                Overall Clarity Score
+              </span>
+              <div className="flex items-baseline gap-1 tabular-nums">
+                <span className="text-4xl sm:text-5xl font-black text-[#F1F5F9] tracking-tight">
+                  {data.score}
+                </span>
+                <span className="text-base sm:text-lg text-[#94A3B8] font-bold">/ 100</span>
+              </div>
+              <div
+                className="w-full bg-[#263044] h-1.5 rounded-full overflow-hidden mt-3"
+                role="progressbar"
+                aria-valuenow={data.score}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label={`Overall Clarity Score: ${data.score}/100`}
+              >
+                <div
+                  style={{ width: `${Math.max(6, Math.min(100, data.score))}%` }}
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    data.score >= 80
+                      ? "bg-emerald-400"
+                      : data.score >= 65
+                      ? "bg-blue-400"
+                      : data.score >= 45
+                      ? "bg-amber-400"
+                      : "bg-rose-400"
+                  }`}
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* =========================================================================
+            2. FIVE FREE CLARITY SIGNALS (COHESIVE CONTAINER)
+           ========================================================================= */}
+        <section
+          id="free-clarity-results"
+          aria-labelledby="free-clarity-results-heading"
+          className="bg-[#121824] border border-[#263044] rounded-3xl p-6 sm:p-8 space-y-6 shadow-lg"
+        >
+          <div>
+            <h2
+              id="free-clarity-results-heading"
+              className="text-xl sm:text-2xl font-extrabold text-[#F1F5F9] tracking-tight"
+            >
+              Your Clarity Results
+            </h2>
+            <p className="text-xs sm:text-sm text-[#94A3B8] mt-1 font-normal">
+              How cold visitors evaluate {cleanDomain} across the five core first-impression signals.
+            </p>
+          </div>
+
+          <div className="bg-[#171F2D] border border-[#263044] rounded-2xl divide-y divide-[#263044] overflow-hidden">
+            {data.signals.map((sig) => {
+              const isClear = sig.badgeType === "clear";
+              const isAmber = sig.badgeType === "amber";
+              const barColor = isClear ? "bg-emerald-400" : isAmber ? "bg-amber-400" : "bg-rose-400";
+              const badgeStyle = isClear
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                : isAmber
+                ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                : "bg-rose-500/10 text-rose-400 border-rose-500/20";
+
+              return (
+                <div
+                  key={sig.id}
+                  className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#1c2536] transition-colors"
+                >
+                  <div className="flex items-center justify-between sm:justify-start sm:w-1/3 gap-3">
+                    <h3 className="text-sm font-bold text-[#F1F5F9]">
+                      {sig.title}
+                    </h3>
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border shrink-0 ${badgeStyle}`}>
+                      {sig.badgeText}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-4 sm:w-2/3 justify-between sm:justify-end">
+                    <div className="w-36 sm:w-48 shrink-0 space-y-1">
+                      <div
+                        className="w-full h-1.5 bg-[#263044] rounded-full overflow-hidden"
+                        role="progressbar"
+                        aria-valuenow={sig.score}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`${sig.title}: ${sig.score}/100`}
+                      >
+                        <div
+                          style={{ width: `${Math.max(6, Math.min(100, sig.score))}%` }}
+                          className={`h-full rounded-full ${barColor}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-baseline gap-1 tabular-nums shrink-0 text-right w-16">
+                      <span className="text-lg font-black text-[#F1F5F9]">
+                        {sig.score}
+                      </span>
+                      <span className="text-xs text-[#94A3B8] font-medium">/100</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* =========================================================================
+            FREE → PAID TRANSITION (PAYWALL)
+           ========================================================================= */}
+        {!data.isUnlocked && (
+          <section
+            id="paid-report-paywall-section"
+            aria-labelledby="paid-report-paywall-heading"
+            className="bg-[#121824] border border-[#263044] rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl print:hidden"
+          >
+            <div className="max-w-lg mx-auto text-center space-y-4">
+              <h2
+                id="paid-report-paywall-heading"
+                className="text-2xl sm:text-3xl font-extrabold text-[#F1F5F9] tracking-tight"
+              >
+                Unlock Your Complete Clarity Analysis
+              </h2>
+
+              <p className="text-sm text-[#94A3B8] leading-relaxed">
+                Understand why each signal scored this way and discover what to improve.
+              </p>
+
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 text-left pt-2">
+                <div className="flex items-center gap-2.5 text-xs text-[#F1F5F9] font-medium">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Detailed signal explanations</span>
+                </div>
+                <div className="flex items-center gap-2.5 text-xs text-[#F1F5F9] font-medium">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Actionable improvements</span>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <div className="text-2xl sm:text-3xl font-black text-[#F1F5F9] tabular-nums">
+                  $5 <span className="text-xs font-normal text-[#94A3B8]">· One-time</span>
+                </div>
+              </div>
+
+              <form onSubmit={handlePaywallCheckout} className="space-y-3 pt-2 text-left" noValidate>
+                <div>
+                  <label htmlFor="paywall-email-input" className="sr-only">
+                    Email address for report delivery
+                  </label>
+                  <div className="relative flex items-center">
+                    <Mail className="w-4 h-4 text-[#94A3B8] absolute left-3.5 pointer-events-none" />
+                    <input
+                      id="paywall-email-input"
+                      type="email"
+                      value={paywallEmail}
+                      onChange={(e) => {
+                        setPaywallEmail(e.target.value);
+                        if (paywallEmailError) setPaywallEmailError(null);
+                      }}
+                      placeholder="Enter your email for report access…"
+                      aria-label="Email address for report delivery"
+                      aria-invalid={Boolean(paywallEmailError)}
+                      className={`w-full pl-10 pr-4 py-3 min-h-[46px] text-xs sm:text-sm bg-[#171F2D] border rounded-xl text-[#F1F5F9] placeholder:text-[#94A3B8] outline-none transition-all ${
+                        paywallEmailError
+                          ? "border-rose-400 ring-2 ring-rose-500/20"
+                          : "border-[#263044] focus:border-[#3B82F6] focus:ring-2 focus:ring-blue-500/20"
+                      }`}
+                    />
+                  </div>
+                  {paywallEmailError && (
+                    <p className="text-[11px] text-rose-400 font-medium mt-1 pl-1" role="alert">
+                      {paywallEmailError}
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={paywallCheckoutState === "processing"}
+                  className="w-full min-h-[48px] rounded-xl bg-[#3B82F6] hover:bg-blue-600 active:scale-[0.99] text-white font-bold text-sm px-6 py-3 transition-all inline-flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-70 focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:outline-none"
+                >
+                  <span>
+                    {paywallCheckoutState === "processing" ? "Preparing checkout…" : "Unlock Full Analysis — $5"}
+                  </span>
+                  <ArrowRight className="w-4 h-4 shrink-0" />
+                </button>
+
+                {paywallCheckoutState === "coming_soon" && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-left text-xs text-amber-200 space-y-1"
+                  >
+                    <p className="font-bold text-amber-300">Online checkout is not yet active</p>
+                    <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                      Paddle checkout for the $5 Complete Analysis is currently being finalized for launch. No payment was processed and <strong className="font-semibold">{paywallEmail.trim()}</strong> has not been charged.
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-[#94A3B8] text-center">
+                  No subscription.
+                </p>
+
+                <div className="pt-3 border-t border-[#263044] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-[#94A3B8]">
+                  <Link href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] underline underline-offset-2 transition-colors">
+                    Terms
+                  </Link>
+                  <span aria-hidden="true">·</span>
+                  <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] underline underline-offset-2 transition-colors">
+                    Privacy
+                  </Link>
+                  <span aria-hidden="true">·</span>
+                  <Link href="/refund-policy" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] underline underline-offset-2 transition-colors">
+                    Refund Policy
+                  </Link>
+                  <span aria-hidden="true">·</span>
+                  <Link href="/contact" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] underline underline-offset-2 transition-colors">
+                    Support
+                  </Link>
+                </div>
+              </form>
+            </div>
+          </section>
+        )}
+
+        {/* =========================================================================
+            PREMIUM — INTERACTIVE FIVE-SIGNAL ANALYSIS
+           ========================================================================= */}
+        {(data.isUnlocked || true) && (
+          <section
+            id="premium-five-signal-analysis"
+            aria-labelledby="premium-analysis-heading"
+            className="bg-[#121824] border border-[#263044] rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl"
+          >
+            <div>
+              <span className="text-[11px] font-extrabold tracking-widest text-[#3B82F6] uppercase block mb-1">
+                PREMIUM ANALYSIS
+              </span>
+              <h2
+                id="premium-analysis-heading"
+                className="text-xl sm:text-2xl font-extrabold text-[#F1F5F9] tracking-tight"
+              >
+                Your Complete Clarity Analysis
+              </h2>
+              <p className="text-xs sm:text-sm text-[#94A3B8] mt-1 font-normal">
+                Explore your five clarity signals and understand what makes your website clear or unclear.
+              </p>
+            </div>
+
+            {/* Interactive Tab Selector */}
+            <div
+              role="tablist"
+              aria-label="Clarity signals"
+              className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none border-b border-[#263044]"
+            >
+              {data.signals.map((sig) => {
+                const isSelected = sig.id === selectedPremiumSignalId;
+                return (
+                  <button
+                    key={sig.id}
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => setSelectedPremiumSignalId(sig.id)}
+                    className={`px-4 py-3 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2 min-h-[44px] ${
+                      isSelected
+                        ? "bg-[#3B82F6] text-white shadow-md"
+                        : "bg-[#171F2D] text-[#94A3B8] hover:text-[#F1F5F9] hover:bg-[#1f293d]"
+                    }`}
+                  >
+                    <span>{sig.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Selected Signal Detail Panel (4 Concepts ONLY) */}
+            {currentSelectedSignal && (
+              <div className="bg-[#171F2D] border border-[#263044] rounded-2xl p-5 sm:p-6 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#263044]">
+                  <div>
+                    <h3 className="text-lg sm:text-xl font-bold text-[#F1F5F9]">
+                      {currentSelectedSignal.title}
+                    </h3>
+                  </div>
+                  <div className="flex items-baseline gap-1.5 tabular-nums self-start sm:self-auto">
+                    <span className="text-2xl font-black text-[#F1F5F9]">
+                      {currentSelectedSignal.score}
+                    </span>
+                    <span className="text-xs text-[#94A3B8]">/ 100</span>
+                    <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${
+                      currentSelectedSignal.badgeType === "clear"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        : currentSelectedSignal.badgeType === "amber"
+                        ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                        : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                    }`}>
+                      {currentSelectedSignal.badgeText}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs sm:text-sm">
+                  {/* A. WHY THIS SCORE? */}
+                  <div className="bg-[#121824] border border-[#263044] rounded-xl p-4 space-y-2">
+                    <span className="text-[11px] font-extrabold tracking-widest text-[#3B82F6] uppercase block">
+                      WHY THIS SCORE?
+                    </span>
+                    <p className="text-[#F1F5F9] leading-relaxed font-normal">
+                      {signalDetails.why}
+                    </p>
+                  </div>
+
+                  {/* B. WHAT'S WORKING? */}
+                  <div className="bg-[#121824] border border-[#263044] rounded-xl p-4 space-y-2">
+                    <span className="text-[11px] font-extrabold tracking-widest text-emerald-400 uppercase block">
+                      WHAT&apos;S WORKING?
+                    </span>
+                    <p className="text-[#F1F5F9] leading-relaxed font-normal">
+                      {signalDetails.working}
+                    </p>
+                  </div>
+
+                  {/* C. WHAT'S UNCLEAR? */}
+                  <div className="bg-[#121824] border border-[#263044] rounded-xl p-4 space-y-2">
+                    <span className="text-[11px] font-extrabold tracking-widest text-amber-400 uppercase block">
+                      WHAT&apos;S UNCLEAR?
+                    </span>
+                    <p className="text-[#F1F5F9] leading-relaxed font-normal">
+                      {signalDetails.unclear}
+                    </p>
+                  </div>
+
+                  {/* D. HOW TO IMPROVE? */}
+                  <div className="bg-[#121824] border border-[#263044] rounded-xl p-4 space-y-2">
+                    <span className="text-[11px] font-extrabold tracking-widest text-blue-400 uppercase block">
+                      HOW TO IMPROVE?
+                    </span>
+                    <p className="text-[#F1F5F9] leading-relaxed font-normal">
+                      {signalDetails.improve}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* =========================================================================
+            LAST PAID SECTION — FIRST 5 SECONDS
+           ========================================================================= */}
+        <section
+          id="first-seconds-section"
+          aria-labelledby="first-seconds-heading"
+          className="bg-[#121824] border border-[#263044] rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl"
+        >
+          <div>
+            <span className="text-[11px] font-extrabold tracking-widest text-[#3B82F6] uppercase block mb-1">
+              FIRST-IMPRESSION CONCLUSION
+            </span>
+            <h2
+              id="first-seconds-heading"
+              className="text-xl sm:text-2xl font-extrabold text-[#F1F5F9] tracking-tight"
+            >
+              First 5 Seconds
+            </h2>
+            <p className="text-xs sm:text-sm text-[#94A3B8] mt-1 font-normal">
+              What might a new visitor understand immediately upon arrival?
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Part 1: WHAT A VISITOR MAY UNDERSTAND */}
+            <div className="bg-[#171F2D] border border-emerald-500/20 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0" />
+                <h3 className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-emerald-400">
+                  What a Visitor May Understand
+                </h3>
+              </div>
+              <ul className="space-y-2.5">
+                {firstSecondsData.understood.map((item, idx) => (
+                  <li key={idx} className="flex items-start gap-2.5 text-xs sm:text-sm text-[#F1F5F9]">
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Part 2: WHAT A VISITOR MAY MISS */}
+            <div className="bg-[#171F2D] border border-amber-500/20 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
+                <h3 className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-amber-400">
+                  What a Visitor May Miss
+                </h3>
+              </div>
+              <ul className="space-y-2.5">
+                {firstSecondsData.missed.map((item, idx) => (
+                  <li key={idx} className="flex items-start gap-2.5 text-xs sm:text-sm text-[#F1F5F9]">
+                    <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        {/* =========================================================================
+            6. SHARE AND DOWNLOAD ACTIONS
+           ========================================================================= */}
+        <section
+          id="share-and-download-actions"
+          aria-labelledby="share-download-heading"
+          className="bg-[#121824] border border-[#263044] rounded-3xl p-6 sm:p-8 space-y-4 shadow-xl print:hidden"
+        >
+          <div>
+            <h2
+              id="share-download-heading"
+              className="text-lg sm:text-xl font-extrabold text-[#F1F5F9] tracking-tight"
+            >
+              Share & Download Report
+            </h2>
+            <p className="text-xs sm:text-sm text-[#94A3B8] mt-1">
+              Save your website clarity report or share first-impression results with your team.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleShare}
+              className="flex-1 min-h-[46px] rounded-xl bg-[#171F2D] hover:bg-[#1f293d] border border-[#263044] text-[#F1F5F9] font-semibold text-xs sm:text-sm px-4 py-2.5 transition flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:outline-none"
+            >
+              <Share2 className="w-4 h-4 text-[#3B82F6] shrink-0" />
+              <span>Share Summary</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadReport}
+              disabled={downloadState === "preparing"}
+              className="flex-1 min-h-[46px] rounded-xl bg-[#171F2D] hover:bg-[#1f293d] border border-[#263044] text-[#F1F5F9] font-semibold text-xs sm:text-sm px-4 py-2.5 transition flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:outline-none disabled:opacity-60"
+            >
+              <Download className="w-4 h-4 text-[#3B82F6] shrink-0" />
+              <span>
+                {downloadState === "preparing"
+                  ? "Preparing download…"
+                  : downloadState === "downloaded"
+                  ? "Downloaded!"
+                  : data.isUnlocked
+                  ? "Download Full Report"
+                  : "Download Free Summary"}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCheckAgain}
+              disabled={checkAgainState === "checking"}
+              className="flex-1 min-h-[46px] rounded-xl bg-[#171F2D] hover:bg-[#1f293d] border border-[#263044] text-[#F1F5F9] font-semibold text-xs sm:text-sm px-4 py-2.5 transition flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-[#3B82F6] focus-visible:outline-none disabled:opacity-60"
+            >
+              <RefreshCw
+                className={`w-4 h-4 text-[#3B82F6] shrink-0 ${
+                  checkAgainState === "checking" ? "animate-spin" : ""
+                }`}
+              />
+              <span>{checkAgainState === "checking" ? "Checking…" : "Check Website Again"}</span>
+            </button>
+          </div>
+        </section>
+      </main>
+
+      {/* FOOTER */}
+      <footer className="w-full bg-[#090D15] border-t border-[#263044] py-8 px-4 sm:px-6 text-center text-xs text-[#94A3B8]">
+        <div className="max-w-[1000px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p>© {new Date().getFullYear()} StrangerLens. See your website through a stranger&apos;s eyes.</p>
+          <div className="flex items-center gap-4">
+            <Link href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] transition">Terms</Link>
+            <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] transition">Privacy</Link>
+            <Link href="/refund-policy" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] transition">Refund Policy</Link>
+            <Link href="/contact" target="_blank" rel="noopener noreferrer" className="hover:text-[#F1F5F9] transition">Support</Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
-
-

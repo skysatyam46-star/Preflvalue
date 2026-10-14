@@ -31,12 +31,9 @@ export function normalizeSignalScore(
   // 2. Clamp score to bounds [0, 100]
   numericScore = Math.max(0, Math.min(100, Math.round(numericScore)));
 
-  // 3. Resolve contradictions between initial status & score
-  if ((normStatus === "unclear" || normStatus === "needs_work") && numericScore > rangeConfig.max) {
-    numericScore = rangeConfig.max;
-  }
-  if ((normStatus === "clear" || normStatus === "understandable") && numericScore < rangeConfig.min) {
-    numericScore = rangeConfig.min;
+  // 3. Resolve contradictions: if status is unclear/needs_work, cap score to <= 44
+  if ((normStatus === "unclear" || normStatus === "needs_work") && numericScore > 44) {
+    numericScore = 44;
   }
 
   // 4. Evidence grounding adjustment

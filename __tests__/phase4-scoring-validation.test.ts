@@ -347,4 +347,178 @@ describe("Phase 4 Evidence Validation & Deterministic Scoring Tests", () => {
     expect(run1.overall_status).toBe(run2.overall_status);
     expect(JSON.stringify(run1)).toBe(JSON.stringify(run2));
   });
+
+  test("18. Score and risk consistency: low trust score (25/100) enforces high severity trust risk", () => {
+    const snapshot = createMockSnapshot();
+    const aiAnalysis = createMockAiAnalysis();
+    aiAnalysis.signals.trust = {
+      score: 25,
+      status: "unclear",
+      explanation: "No verifiable trust signals or credentials found.",
+      confidence: "low",
+      evidence_refs: [],
+    };
+    aiAnalysis.risks = []; // Even if AI returned empty risks
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, snapshot);
+
+    expect(validated.signals.trust.score).toBeLessThanOrEqual(45);
+    expect(validated.risks.length).toBeGreaterThan(0);
+    const trustRisk = validated.risks.find((r) => r.category.toLowerCase().includes("trust"));
+    expect(trustRisk).toBeDefined();
+    expect(trustRisk?.severity).toBe("high");
+  });
+
+  test("19. Risks are never empty when overall score needs improvement", () => {
+    const snapshot = createMockSnapshot();
+    const aiAnalysis = createMockAiAnalysis();
+    aiAnalysis.signals.audience.score = 40;
+    aiAnalysis.signals.audience.status = "unclear";
+    aiAnalysis.signals.value.score = 50;
+    aiAnalysis.signals.value.status = "partly_clear";
+    aiAnalysis.risks = [];
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, snapshot);
+
+    expect(validated.overall_status).toBe("needs_improvement");
+    expect(validated.risks.length).toBeGreaterThanOrEqual(1);
+    expect(validated.priority_fix.impact).toBe("high");
+  });
+
+  test("20. Cross-section consistency: signal status and first_seconds status align with normalized signal scores", () => {
+    const snapshot = createMockSnapshot();
+    const aiAnalysis = createMockAiAnalysis();
+    // AI returns contradictory high status 'clear' for first_seconds.why_should_i_care while trust score is 30 ('unclear')
+    aiAnalysis.signals.trust = {
+      score: 30,
+      status: "clear" as any, // Contradictory raw status
+      explanation: "No proof points found.",
+      confidence: "low",
+      evidence_refs: [],
+    };
+    aiAnalysis.first_seconds.why_should_i_care.status = "clear";
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, snapshot);
+
+    expect(validated.signals.trust.score).toBe(30);
+    expect(validated.signals.trust.status).toBe("unclear");
+    expect(validated.first_seconds.why_should_i_care.status).toBe("unclear");
+  });
+
+  test("21. Priority fix what_you_say_now rejects ungrounded fabricated quotes and falls back to verified hero copy", () => {
+    const snapshot = createMockSnapshot();
+    const aiAnalysis = createMockAiAnalysis();
+    aiAnalysis.priority_fix.what_you_say_now = "We are the #1 AI Quantum Blockchain in the Universe";
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, snapshot);
+
+    expect(validated.priority_fix.what_you_say_now).not.toContain("Quantum Blockchain");
+    expect(validated.priority_fix.what_you_say_now).toContain("Build Websites Faster");
+  });
+
+  test("22. AI paraphrase containing only short brandName is rejected by validateSingleEvidence", () => {
+    const snapshot = createMockSnapshot();
+    const validated = validateSingleEvidence(
+      {
+        source: "hero",
+        element: "headline",
+        text: "FastFlow is an enterprise platform used by global teams everywhere",
+      },
+      snapshot
+    );
+
+    expect(validated.status).toBe("rejected");
+  });
+
+  test("23. Fabricated metrics, ratings, certifications, and guarantees in recommendations are rejected", () => {
+    const snapshot = createMockSnapshot();
+    const aiAnalysis = createMockAiAnalysis();
+    aiAnalysis.priority_fix = {
+      title: "Add social proof headline",
+      reason: "Visitors need immediate proof.",
+      impact: "high",
+      what_you_say_now: "Build Websites Faster",
+      clearer_direction:
+        "Join 10,000+ Fortune 500 companies achieving 47% faster growth (SOC 2 Certified · No credit card required)",
+      evidence_refs: [],
+    };
+    aiAnalysis.other_improvements = [
+      {
+        title: "Add customer rating badge",
+        explanation: "Show your rating.",
+        what_to_improve: "Add a rating badge.",
+        why_it_matters: "Increases trust.",
+        copyable_suggestion: "Rated 4.9/5 by 25,000+ developers with 99.99% uptime",
+        evidence_refs: [],
+      },
+    ];
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, snapshot);
+
+    expect(validated.priority_fix.clearer_direction).not.toContain("10,000+");
+    expect(validated.priority_fix.clearer_direction).not.toContain("47%");
+    expect(validated.priority_fix.clearer_direction).not.toContain("SOC 2");
+    if (validated.other_improvements.length > 0) {
+      expect(validated.other_improvements[0].copyable_suggestion || "").not.toContain("4.9/5");
+      expect(validated.other_improvements[0].copyable_suggestion || "").not.toContain("25,000+");
+    }
+  });
+
+  test("24. Contradiction prevention: low trust score with verified trust evidence acknowledges the proof element nuancedly", () => {
+    const snapshot = createMockSnapshot();
+    const aiAnalysis = createMockAiAnalysis();
+    aiAnalysis.signals.trust = {
+      score: 42,
+      status: "needs_work",
+      explanation: "There are no trust signals or social proof anywhere on the page.",
+      confidence: "medium",
+      evidence_refs: [{ source: "trust", text: "Trusted by 5,000+ creators" }],
+    };
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, snapshot);
+
+    expect(validated.signals.trust.evidence.length).toBe(1);
+    expect(validated.signals.trust.explanation).toContain("Trusted by 5,000+ creators");
+  });
+
+  test("25. Incomplete extraction qualifies claims honestly and caps website_message confidence at low", () => {
+    const partialSnapshot: WebsiteSnapshot = {
+      ...createMockSnapshot(),
+      meta: { title: "", description: "" },
+      hero: { headline: "", subheadline: "" },
+      valueProps: {
+        headings: [],
+        featureCards: [],
+        pricingSignals: {
+          hasPricingPageLink: false,
+          plans: [],
+          mentionsFreeTrial: false,
+          mentionsGuarantee: false,
+        },
+      },
+      trustSignals: {
+        socialProofHeadings: [],
+        statsAndMetrics: [],
+        testimonials: [],
+        badgesAndCertifications: [],
+        customerLogosAlt: [],
+      },
+      stats: {
+        rawHtmlLength: 300,
+        cleanedTextLength: 60,
+        totalHeadings: 0,
+        totalLinks: 0,
+        totalImages: 0,
+      },
+    };
+    const aiAnalysis = createMockAiAnalysis();
+    aiAnalysis.verdict.text = "There are no trust signals on this website.";
+    aiAnalysis.priority_fix.what_you_say_now = "Unverified headline quote not on page";
+
+    const validated = validateAndScoreAnalysis(aiAnalysis, partialSnapshot);
+
+    expect(validated.website_message.confidence).toBe("low");
+    expect(validated.verdict.text).toContain("accessible homepage content");
+    expect(validated.priority_fix.what_you_say_now).toContain("Current headline excerpt unavailable");
+  });
 });

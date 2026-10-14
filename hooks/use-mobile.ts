@@ -10,11 +10,12 @@ export function useIsMobile() {
   }, [])
 
   const getSnapshot = () => {
-    if (typeof window === "undefined") return false
     return window.innerWidth < MOBILE_BREAKPOINT
   }
 
-  const getServerSnapshot = () => false
+  const getServerSnapshot = () => {
+    return false
+  }
 
   return React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

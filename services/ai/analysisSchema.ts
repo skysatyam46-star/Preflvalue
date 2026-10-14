@@ -122,6 +122,9 @@ export interface WebsiteAnalysis {
   other_improvements: Array<{
     title: string;
     explanation: string;
+    why_it_matters?: string;
+    what_to_improve?: string;
+    copyable_suggestion?: string;
     evidence_refs: EvidenceRef[];
   }>;
 }
@@ -277,6 +280,9 @@ export const WEBSITE_ANALYSIS_GEMINI_SCHEMA: Schema = {
         properties: {
           title: { type: Type.STRING },
           explanation: { type: Type.STRING },
+          why_it_matters: { type: Type.STRING },
+          what_to_improve: { type: Type.STRING },
+          copyable_suggestion: { type: Type.STRING },
           evidence_refs: {
             type: Type.ARRAY,
             items: evidenceRefSchema,

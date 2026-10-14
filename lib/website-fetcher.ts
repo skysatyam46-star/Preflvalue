@@ -51,7 +51,7 @@ export interface FetchOptions {
 }
 
 const DEFAULT_USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 ValueCheck-Bot/1.0 (+https://valuecheck.app)";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 StrangerLens-Bot/1.0 (+https://strangerlens.app)";
 
 /**
  * Safely fetches the homepage of a target website with SSRF protection,
@@ -96,7 +96,11 @@ export async function fetchWebsiteHomepage(
       const elapsed = Math.round(performance.now() - startTime);
       return {
         success: false,
-        error: (ssrfResult as any).isDnsFailure ? "INVALID_URL" : "SSRF_BLOCKED",
+        error: ssrfResult.isDnsFailure
+          ? redirectCount > 0
+            ? "FETCH_FAILED"
+            : "INVALID_URL"
+          : "SSRF_BLOCKED",
         message: ssrfResult.reason || "Destination address blocked by security policy",
         originalUrl: rawUrl,
         normalizedUrl,
@@ -214,6 +218,63 @@ export async function fetchWebsiteHomepage(
 
       // 4. Handle Successful HTTP Response (200 - 299)
       const contentType = response.headers.get("content-type") || "text/html";
+      const lowerContentType = contentType.toLowerCase();
+
+      // Reject binary / non-document content types before downloading payload
+      if (
+        lowerContentType.startsWith("image/") ||
+        lowerContentType.startsWith("video/") ||
+        lowerContentType.startsWith("audio/") ||
+        lowerContentType.startsWith("font/") ||
+        lowerContentType.includes("application/pdf") ||
+        lowerContentType.includes("application/zip") ||
+        lowerContentType.includes("application/octet-stream") ||
+        lowerContentType.includes("application/x-msdownload") ||
+        lowerContentType.includes("application/gzip")
+      ) {
+        clearTimeout(timer);
+        if (parentSignal) parentSignal.removeEventListener("abort", parentAbortHandler);
+        if (response.body) {
+          await response.body.cancel("Unsupported binary content type").catch(() => {});
+        }
+        const elapsed = Math.round(performance.now() - startTime);
+        return {
+          success: false,
+          error: "FETCH_FAILED",
+          message: `Target URL returned an unsupported non-HTML content type (${contentType.split(";")[0]})`,
+          originalUrl: rawUrl,
+          normalizedUrl,
+          finalUrl: currentUrl,
+          redirectCount: redirectHistory.length,
+          redirectHistory,
+          timingMs: elapsed,
+        };
+      }
+
+      // Check declared Content-Length header upfront before streaming bytes
+      const contentLengthHeader = response.headers.get("content-length");
+      if (contentLengthHeader) {
+        const declaredBytes = parseInt(contentLengthHeader, 10);
+        if (!Number.isNaN(declaredBytes) && declaredBytes > maxSizeBytes) {
+          clearTimeout(timer);
+          if (parentSignal) parentSignal.removeEventListener("abort", parentAbortHandler);
+          if (response.body) {
+            await response.body.cancel("Content-Length exceeded maximum allowed limit").catch(() => {});
+          }
+          const elapsed = Math.round(performance.now() - startTime);
+          return {
+            success: false,
+            error: "WEBSITE_RESPONSE_TOO_LARGE",
+            message: "This website is too large to check right now.",
+            originalUrl: rawUrl,
+            normalizedUrl,
+            finalUrl: currentUrl,
+            redirectCount: redirectHistory.length,
+            redirectHistory,
+            timingMs: elapsed,
+          };
+        }
+      }
 
       // 5. Stream reading with strict byte-by-byte size enforcement (do NOT download unlimited body)
       let html = "";

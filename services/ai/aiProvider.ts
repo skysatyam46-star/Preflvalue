@@ -9,7 +9,7 @@ export interface AIProvider {
 
 export class GeminiAIProvider implements AIProvider {
   private ai: GoogleGenAI | null = null;
-  private candidateModels = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"];
+  private candidateModels = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.8-flash"];
 
   constructor(apiKey?: string) {
     const key = apiKey || process.env.GEMINI_API_KEY;
@@ -31,7 +31,7 @@ export class GeminiAIProvider implements AIProvider {
     }
 
     const formattedInput = formatSnapshotForAi(snapshot);
-    const userPrompt = `Perform a ValueCheck first-impression analysis on this WebsiteSnapshot:\n\n${formattedInput}`;
+    const userPrompt = `Perform a Percept first-impression analysis on this WebsiteSnapshot:\n\n${formattedInput}`;
 
     let lastError: Error | null = null;
 

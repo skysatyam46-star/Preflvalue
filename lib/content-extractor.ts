@@ -74,6 +74,7 @@ export interface WebsiteSnapshot {
 
 export interface ExtractOptions {
   baseUrl?: string;
+  maxHtmlChars?: number;
 }
 
 /**
@@ -101,6 +102,170 @@ function cleanText(str: string | undefined): string {
   return str.replace(/\s+/g, " ").trim();
 }
 
+const PURE_NAV_OR_UTILITY_LABELS = new Set([
+  "faq",
+  "faqs",
+  "frequently asked questions",
+  "about",
+  "about us",
+  "our story",
+  "team",
+  "careers",
+  "jobs",
+  "press",
+  "media",
+  "blog",
+  "news",
+  "articles",
+  "docs",
+  "documentation",
+  "api",
+  "guides",
+  "resources",
+  "community",
+  "forum",
+  "status",
+  "system status",
+  "security",
+  "privacy",
+  "privacy policy",
+  "terms",
+  "terms of service",
+  "terms & conditions",
+  "legal",
+  "cookie policy",
+  "cookies",
+  "contact",
+  "contact us",
+  "support",
+  "help",
+  "help center",
+  "log in",
+  "login",
+  "sign in",
+  "signin",
+  "home",
+  "menu",
+  "open menu",
+  "close menu",
+  "toggle menu",
+  "toggle theme",
+  "dark mode",
+  "light mode",
+  "close",
+  "skip to content",
+  "back",
+  "next",
+  "previous",
+  "search",
+  "features",
+  "how it works",
+  "testimonials",
+  "reviews",
+  "customers",
+  "solutions",
+  "use cases",
+]);
+
+const UTILITY_SUBSTRING_KEYWORDS = [
+  "login",
+  "log in",
+  "sign in",
+  "contact us",
+  "privacy policy",
+  "terms of service",
+  "cookie policy",
+  "help center",
+  "toggle menu",
+  "skip to",
+  "frequently asked",
+];
+
+const PRIMARY_CONVERSION_KEYWORDS = [
+  "get started",
+  "start free",
+  "start a free",
+  "start trial",
+  "start now",
+  "try free",
+  "try for free",
+  "try it",
+  "try now",
+  "book demo",
+  "book a demo",
+  "request demo",
+  "schedule demo",
+  "buy now",
+  "order now",
+  "shop now",
+  "sign up",
+  "register now",
+  "create account",
+  "claim",
+  "join",
+  "get access",
+  "get early access",
+  "get valuecheck",
+  "find my",
+  "check my",
+  "see my",
+  "get my",
+  "calculate",
+  "analyze",
+  "scan",
+  "generate",
+  "discover your",
+  "discover my",
+  "check your",
+  "test your",
+  "run check",
+  "run analysis",
+  "get report",
+  "free report",
+  "unlock",
+  "launch",
+];
+
+/**
+ * Determines whether a label or href represents a navigation, informational,
+ * FAQ, or utility control rather than a primary conversion CTA.
+ */
+export function isNavigationOrUtilityCtaLabel(
+  text: string | undefined,
+  rawHref?: string
+): boolean {
+  if (!text) return true;
+  const cleaned = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!cleaned || cleaned.length < 2) return true;
+
+  // Reject pure symbols, numbers, or question strings (e.g., FAQ accordion headings)
+  if (/^[\d\W]+$/.test(cleaned) || cleaned.endsWith("?")) {
+    return true;
+  }
+
+  if (PURE_NAV_OR_UTILITY_LABELS.has(cleaned)) {
+    return true;
+  }
+
+  if (UTILITY_SUBSTRING_KEYWORDS.some((kw) => cleaned.includes(kw))) {
+    return true;
+  }
+
+  if (rawHref) {
+    const h = rawHref.trim().toLowerCase();
+    if (
+      h === "#" ||
+      /^#(?:faq|faqs|about|features|how-it-works|testimonials|reviews|footer|contact|team|docs)\b/i.test(
+        h
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Main Phase 2 Website Content Extractor.
  * Deterministically parses HTML using Cheerio, strips DOM noise, and builds a
@@ -113,8 +278,12 @@ export function extractWebsiteSnapshot(
   const rawHtmlLength = html.length;
   const baseUrl = options.baseUrl;
 
+  // Enforce hard character bound before DOM parsing to prevent excessive memory consumption
+  const maxHtmlChars = options.maxHtmlChars ?? SERVER_LIMITS.WEBSITE_MAX_HTML_CHARS;
+  const boundedHtml = html.length > maxHtmlChars ? html.slice(0, maxHtmlChars) : html;
+
   // 1. Load Cheerio
-  const $ = cheerio.load(html);
+  const $ = cheerio.load(boundedHtml);
 
   // Measure raw elements before DOM noise stripping
   const totalHeadings = $("h1, h2, h3, h4, h5, h6").length;
@@ -203,7 +372,37 @@ export function extractWebsiteSnapshot(
     }
   });
 
-  // 5. CTA Inventory Extraction
+  // 5. Identify Hero Container First (so CTA location and hero text share consistent boundaries)
+  let heroContainer = $(
+    ".hero, #hero, [class*='hero-section'], [class*='hero_section'], .banner, .intro, header + section, main > section:first-of-type"
+  ).first();
+
+  const mainFirstH1 = $("main h1, [role='main'] h1, body h1")
+    .filter((_, el) => $(el).closest("header, nav, footer, .header, .nav, .footer").length === 0)
+    .first();
+
+  if (heroContainer.length === 0 && mainFirstH1.length > 0) {
+    const h1Container = mainFirstH1
+      .closest("section, article, form, [class*='hero'], [class*='container'], [class*='wrapper'], div")
+      .first();
+    if (h1Container.length > 0) {
+      heroContainer = h1Container as typeof heroContainer;
+    }
+  } else if (
+    heroContainer.length > 0 &&
+    mainFirstH1.length > 0 &&
+    heroContainer.find("h1").length === 0
+  ) {
+    // If section:first-of-type was a later section (e.g. #faq) because the hero used a <div> around <h1>
+    const h1Container = mainFirstH1
+      .closest("section, article, form, [class*='hero'], [class*='container'], [class*='wrapper'], div")
+      .first();
+    if (h1Container.length > 0) {
+      heroContainer = h1Container as typeof heroContainer;
+    }
+  }
+
+  // 5b. CTA Inventory Extraction
   const ctas: CTAItem[] = [];
   const ctaDedupeSet = new Set<string>();
 
@@ -212,7 +411,8 @@ export function extractWebsiteSnapshot(
   ctaElements.each((_, el) => {
     const $el = $(el);
     const text = cleanText($el.text() || $el.attr("value") || $el.attr("aria-label") || "");
-    const href = resolveUrl($el.attr("href"), baseUrl);
+    const rawHrefAttr = $el.attr("href");
+    const href = resolveUrl(rawHrefAttr, baseUrl);
     const ariaLabel = $el.attr("aria-label") ? cleanText($el.attr("aria-label")) : undefined;
     const tagName = el.tagName.toLowerCase();
 
@@ -220,47 +420,62 @@ export function extractWebsiteSnapshot(
 
     // Determine Location
     let location: CTAItem["location"] = "body";
-    if ($el.closest("header, nav, .header, .nav, .navbar").length > 0) {
+    if ($el.closest("header, nav, [role='banner'], [role='navigation'], .header, .nav, .navbar").length > 0) {
       location = "header";
-    } else if (
-      $el.closest(".hero, #hero, .banner, .intro, section:first-of-type, header + section").length > 0
-    ) {
-      location = "hero";
-    } else if ($el.closest("footer, .footer, #footer").length > 0) {
+    } else if ($el.closest("footer, [role='contentinfo'], .footer, #footer").length > 0) {
       location = "footer";
     } else if ($el.closest(".sticky, .top-bar, .announcement-bar, .cta-banner").length > 0) {
       location = "sticky_banner";
+    } else if (
+      $el.closest(".hero, #hero, [class*='hero'], .banner, .intro, header + section").length > 0 ||
+      (heroContainer.length > 0 &&
+        ($el.closest(heroContainer).length > 0 || heroContainer.find($el).length > 0))
+    ) {
+      location = "hero";
     }
 
     // Determine CTA Type
     const lowerText = text.toLowerCase();
+    const classAttr = ($el.attr("class") || "").toLowerCase();
+    const hasPrimaryClass =
+      $el.hasClass("btn-primary") ||
+      $el.hasClass("button-primary") ||
+      /\b(btn-primary|button-primary|cta-primary|primary-cta|hero-cta)\b/i.test(classAttr);
+    const isFormSubmit =
+      (tagName === "input" && ($el.attr("type") || "").toLowerCase() === "submit") ||
+      (tagName === "button" && ($el.attr("type") || "").toLowerCase() === "submit") ||
+      ($el.is("button") && $el.closest("form").length > 0);
+    const isUtilityOrNav = isNavigationOrUtilityCtaLabel(text, rawHrefAttr);
+
     let type: CTAItem["type"] = "secondary";
 
-    const primaryKeywords = [
-      "get started", "start free", "start a free", "try free", "try for free",
-      "book demo", "buy now", "sign up", "claim", "join", "get access",
-      "create account", "get valuecheck", "start trial", "register now", "order now"
-    ];
-
-    const utilityKeywords = [
-      "login", "log in", "sign in", "contact", "contact us", "subscribe",
-      "download", "help", "support", "privacy", "terms"
-    ];
-
-    if (primaryKeywords.some((k) => lowerText.includes(k))) {
-      type = "primary";
-    } else if (utilityKeywords.some((k) => lowerText.includes(k))) {
+    if (isUtilityOrNav) {
       type = "utility";
+    } else if (
+      PRIMARY_CONVERSION_KEYWORDS.some((k) => lowerText.includes(k)) ||
+      hasPrimaryClass ||
+      isFormSubmit
+    ) {
+      type = "primary";
     } else if (
       lowerText.includes("learn more") ||
       lowerText.includes("see pricing") ||
       lowerText.includes("view pricing") ||
       lowerText.includes("watch demo") ||
-      lowerText.includes("explore")
+      lowerText.includes("explore") ||
+      lowerText.includes("read more") ||
+      lowerText.includes("how it works")
     ) {
       type = "secondary";
-    } else if ($el.hasClass("btn-primary") || $el.hasClass("button-primary") || $el.is("button")) {
+    } else if (
+      (tagName === "button" || $el.attr("role") === "button") &&
+      (location === "hero" || location === "body") &&
+      $el.closest("#faq, .faq, [class*='faq'], [id*='faq'], footer, header, nav").length === 0
+    ) {
       type = "primary";
+    } else if (location === "header" || location === "footer") {
+      // Plain header/footer links without primary conversion signals are navigation/utility links
+      type = "utility";
     }
 
     const dedupeKey = `${text.toLowerCase()}|${href || ""}|${location}`;
@@ -278,10 +493,6 @@ export function extractWebsiteSnapshot(
   });
 
   // 6. Hero / Above-The-Fold Extraction
-  const heroContainer = $(
-    ".hero, #hero, .banner, .intro, header + section, main section:first-of-type, section:first-of-type"
-  ).first();
-
   let heroHeadline = "";
   let heroSubheadline = "";
 
@@ -298,7 +509,7 @@ export function extractWebsiteSnapshot(
 
   // Fallback for headline if not found in hero container
   if (!heroHeadline) {
-    const firstH1 = $("h1").first();
+    const firstH1 = mainFirstH1.length > 0 ? mainFirstH1 : $("h1").first();
     if (firstH1.length > 0) {
       heroHeadline = cleanText(firstH1.text());
     } else {
@@ -314,10 +525,41 @@ export function extractWebsiteSnapshot(
     }
   }
 
-  // Hero CTAs
-  const heroCtas = ctas.filter((c) => c.location === "hero" || c.location === "header");
-  const heroPrimaryCta = heroCtas.find((c) => c.type === "primary") || ctas.find((c) => c.type === "primary");
-  const heroSecondaryCta = heroCtas.find((c) => c.type === "secondary") || ctas.find((c) => c.type === "secondary");
+  // Deterministic Primary & Secondary CTA Selection:
+  // Prioritize hero conversion CTAs -> main-body conversion CTAs -> sticky banner -> explicit header conversion CTAs.
+  // Never promote navigation or utility items (such as "FAQ", "About", "Contact", "Log in") to heroPrimaryCta.
+  const heroPrimaryCta =
+    ctas.find((c) => c.location === "hero" && c.type === "primary") ||
+    ctas.find((c) => c.location === "body" && c.type === "primary") ||
+    ctas.find((c) => c.location === "sticky_banner" && c.type === "primary") ||
+    ctas.find(
+      (c) =>
+        c.location === "header" &&
+        c.type === "primary" &&
+        !isNavigationOrUtilityCtaLabel(c.text, c.href)
+    ) ||
+    ctas.find(
+      (c) =>
+        c.location === "hero" &&
+        c.type === "secondary" &&
+        !isNavigationOrUtilityCtaLabel(c.text, c.href)
+    );
+
+  const heroSecondaryCta =
+    ctas.find(
+      (c) =>
+        c.location === "hero" &&
+        c.type === "secondary" &&
+        c !== heroPrimaryCta &&
+        !isNavigationOrUtilityCtaLabel(c.text, c.href)
+    ) ||
+    ctas.find(
+      (c) =>
+        c.location === "body" &&
+        c.type === "secondary" &&
+        c !== heroPrimaryCta &&
+        !isNavigationOrUtilityCtaLabel(c.text, c.href)
+    );
 
   // Hero Media
   const heroMedia: Array<{ type: "image" | "video"; src: string; alt?: string }> = [];
